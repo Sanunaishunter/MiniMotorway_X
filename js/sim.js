@@ -11,6 +11,8 @@
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
   ];
 
+  const HOUSES_PER_DEST = 4;
+
   class Game {
     constructor(opts) {
       opts = opts || {};
@@ -23,6 +25,7 @@
 
       this.holders = new Int16Array(n); // cars currently inside each controlled intersection
       this.laneLoad = new Int16Array(n * 4);
+      this.reserved = new Int16Array(n * 4); // exit-lane slots promised to cars that hold an intersection lock
       this.lights = new Map(); // node -> {green, timer, pending, waiting:[bool,bool]}
       this.lanes = new Map(); // laneId -> cars (rebuilt every step)
       this.cars = [];
@@ -116,7 +119,7 @@
     addBuilding(kind, color, node, firstTripDelay) {
       const b = {
         id: this.nextId++, kind, color, node, born: this.time,
-        pins: 0, overflow: 0, // destinations
+        pins: 0, inbound: 0, overflow: 0, // destinations (pins = unmet demand, inbound = those with a car already on the way)
         queue: [], tripTimer: 0, cd: 0, // houses
       };
       if (kind === 'house') b.tripTimer = firstTripDelay != null ? firstTripDelay : 10 + this.rand() * 4;
@@ -125,6 +128,24 @@
       (kind === 'house' ? this.houses : this.dests).push(b);
       this.events.push({ type: 'spawn', kind, color, node });
       return b;
+    }
+
+    /** Timed growth: add a house where a destination has spare capacity, otherwise add another destination. */
+    grow() {
+      if (this.houses.length >= 46) return;
+      const order = [];
+      for (let c = 0; c < this.colorsUnlocked; c++) order.push(c);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(this.rand() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      const count = (list, c) => list.filter((b) => b.color === c).length;
+      for (const c of order) {
+        if (count(this.houses, c) < HOUSES_PER_DEST * count(this.dests, c)) { this.spawnRandom('house', c); return; }
+      }
+      for (const c of order) {
+        if (count(this.dests, c) < 3) { this.spawnRandom('dest', c); return; }
+      }
     }
 
     spawnRandom(kind, color) {
@@ -318,7 +339,8 @@
       const lane = h.node * 4 + w.dirOf(h.node, path[1]);
       if (!this.laneClear(lane, CFG.GAP * 1.4)) return false;
       h.queue.shift();
-      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, dead: false, stamp: -1 };
+      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, dead: false, stamp: -1, idle: 0 };
+      trip.inbound++;
       this.cars.push(car);
       let l = this.lanes.get(lane);
       if (!l) this.lanes.set(lane, (l = []));
@@ -330,7 +352,9 @@
       if (car.dead) return;
       car.dead = true;
       if (car.held >= 0) { this.holders[car.held]--; car.held = -1; }
+      this.dropReservation(car);
       if (requeue) {
+        car.dest.inbound = Math.max(0, (car.dest.inbound || 0) - 1);
         car.house.queue.unshift(car.dest);
         this.events.push({ type: 'lost', node: car.path[car.i], color: car.color });
       }
@@ -349,7 +373,7 @@
         }
         if (!ok) {
           const np = b === car.dest.node ? null : this.route(b, car.dest.node, a);
-          if (np) car.path = p.slice(0, car.i + 1).concat(np);
+          if (np) { car.path = p.slice(0, car.i + 1).concat(np); this.dropReservation(car); }
           else this.killCar(car, true);
         }
       }
@@ -361,7 +385,15 @@
       const a = car.path[car.i];
       const c = car.path[car.i + 2];
       if (c === undefined) return false;
-      if (!this.laneClear(b * 4 + w.dirOf(b, c), CFG.GAP * 1.3)) return false;
+      // Box-junction rule with reservations: the exit lane must have a free slot for this car (cars already in it plus cars
+      // that hold a lock and are about to enter). A lane that ends in a controlled junction queues at the stop line, so it
+      // only has room for 2 cars if a lock holder is still to be able to reach the release point; otherwise 3.
+      const nl = b * 4 + w.dirOf(b, c);
+      let used = this.reserved[nl];
+      const lst = this.lanes.get(nl);
+      if (lst) for (const o of lst) if (!o.dead && o.lane === nl) used++;
+      const controlled = car.path[car.i + 3] !== undefined && !w.bld[c] && w.deg(c) >= 3;
+      if (used + 1 > (controlled ? 2 : 3)) return false;
       const f = w.feat[b];
       if (f === 1) {
         const L = this.lights.get(b);
@@ -372,6 +404,8 @@
         return false;
       }
       this.holders[b]++;
+      this.reserved[nl]++;
+      car.resLane = nl;
       return true;
     }
 
@@ -379,7 +413,14 @@
       const i = car.i;
       const x = car.path[i], y = car.path[i + 1];
       const np = this.route(y, car.dest.node, x);
-      if (np) car.path = car.path.slice(0, i + 1).concat(np);
+      if (np) {
+        car.path = car.path.slice(0, i + 1).concat(np);
+        if (car.resLane >= 0 && car.resLane !== y * 4 + this.world.dirOf(y, car.path[i + 2])) this.dropReservation(car);
+      }
+    }
+
+    dropReservation(car) {
+      if (car.resLane >= 0) { this.reserved[car.resLane]--; car.resLane = -1; }
     }
 
     stepCar(car, list, k, dt) {
@@ -409,7 +450,16 @@
       }
       const ds = Math.min(this.speedOf(car.lane) * dt, maxS - car.s);
       if (ds > 0) car.s += ds;
-      if (car.held >= 0 && car.held === a && car.s >= 0.35) { this.holders[car.held]--; car.held = -1; }
+      if (car.held >= 0 && car.held === a && car.s >= CFG.RELEASE) { this.holders[car.held]--; car.held = -1; }
+      if (ds > 1e-6) car.idle = 0;
+      else {
+        car.idle += dt;
+        if (car.idle > (car.held >= 0 ? CFG.TOW_HOLDER : CFG.TOW_ANY)) {
+          this.events.push({ type: 'lost', node: a, color: car.color });
+          this.killCar(car, true);
+          return;
+        }
+      }
 
       if (car.s >= 0.9999) {
         if (last) {
@@ -422,6 +472,7 @@
         car.i++;
         car.s = 0;
         car.lane = nl;
+        if (car.resLane === nl) this.dropReservation(car);
         let l = this.lanes.get(nl);
         if (!l) this.lanes.set(nl, (l = []));
         l.push(car);
@@ -433,6 +484,7 @@
     deliver(car) {
       car.dead = true;
       car.dest.pins = Math.max(0, car.dest.pins - 1);
+      car.dest.inbound = Math.max(0, (car.dest.inbound || 0) - 1);
       this.score++;
       this.events.push({ type: 'deliver', color: car.color, node: car.dest.node });
     }
@@ -457,8 +509,8 @@
 
       // timed house spawns
       this.houseTimer -= dt;
-      if (this.houseTimer <= 0 && this.houses.length < 46) {
-        this.spawnRandom('house', Math.floor(this.rand() * this.colorsUnlocked));
+      if (this.houseTimer <= 0) {
+        this.grow();
         this.houseTimer = Math.max(7, 15 - 0.8 * this.week) * (0.8 + 0.4 * this.rand());
       }
 
@@ -517,7 +569,7 @@
 
       // overflow
       for (const d of this.dests) {
-        if (d.pins >= CFG.PIN_LIMIT) d.overflow += dt / CFG.OVERFLOW_TIME;
+        if (d.pins - d.inbound >= CFG.PIN_LIMIT) d.overflow += dt / CFG.OVERFLOW_TIME;
         else d.overflow = Math.max(0, d.overflow - dt / 7);
         if (d.overflow >= 1) { this.gameOver(d); return; }
       }

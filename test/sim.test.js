@@ -54,6 +54,7 @@ function sanity(g) {
     if (c.lane !== a * 4 + g.world.dirOf(a, b)) return 'lane mismatch';
   }
   for (let i = 0; i < g.holders.length; i++) if (g.holders[i] < 0) return 'negative holders at ' + i;
+  for (let i = 0; i < g.reserved.length; i++) if (g.reserved[i] < 0) return 'negative reservation at ' + i;
   return null;
 }
 
@@ -153,6 +154,100 @@ console.log('5. traffic lights: cars cross a four-way junction');
   check(!err, 'invariants hold (' + err + ')');
   check(done === 20, 'all 20 crossing cars finished (got ' + done + ')');
   check(g.holders[centre] === 0, 'junction released');
+}
+
+console.log('6. no gridlock / towing in the first 8 minutes (regression for junction deadlocks)');
+{
+  let tows = 0, errs = 0;
+  for (let seed = 1; seed <= 10; seed++) {
+    const g = new MM.Game({ seed });
+    const rnd = MM.mulberry32(seed);
+    for (let t = 0; t < 25 * 60 * 8 && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(Math.floor(rnd() * 3));
+      if (t % 25 === 0) {
+        autoConnect(g);
+        for (let n = 0; n < g.world.n; n++) {
+          if (g.world.deg(n) >= 3 && !g.world.bld[n] && !g.world.feat[n] && g.inv.light > 0 && rnd() < 0.5) g.placeFeature(n, 'light');
+          else if (g.world.deg(n) >= 3 && !g.world.bld[n] && !g.world.feat[n] && g.inv.round > 0 && rnd() < 0.5) g.placeFeature(n, 'round');
+        }
+      }
+      g.update(0.04);
+      for (const e of g.events) if (e.type === 'lost') tows++;
+      g.events.length = 0;
+      if (sanity(g)) errs++;
+    }
+  }
+  check(errs === 0, 'invariants hold across 10 seeds x 8 minutes');
+  check(tows === 0, 'no stuck cars had to be towed (got ' + tows + ')');
+}
+
+console.log('7. adjacent junctions under heavy two-way turning traffic never deadlock (towing disabled)');
+for (const variant of ['plain', 'lights', 'roundabouts', 'light+roundabout']) {
+  console.log('  variant: ' + variant);
+  const g = new MM.Game({ seed: 21 });
+  const w = g.world;
+  let c = -1;
+  for (let n = 0; n < w.n && c < 0; n++) {
+    const col = w.col(n), row = w.row(n);
+    if (col < 4 || row < 4 || col > w.cols - 6 || row > w.rows - 5) continue;
+    let ok = true;
+    for (let dx = -2; dx <= 3; dx++) for (let dy = -2; dy <= 2; dy++) {
+      const m = (row + dy) * w.cols + col + dx;
+      if (w.water[m] || w.bld[m]) ok = false;
+    }
+    if (ok) c = n;
+  }
+  // "H" shape: junctions at c and c+1 joined by one edge, each with arms of length 2 in the other three directions
+  const A = c, B = c + 1;
+  const arm = (from, d) => { const n1 = w.nb(from, d), n2 = w.nb(n1, d); g.addEdge(from, n1, 1); g.addEdge(n1, n2, 1); return [n1, n2]; };
+  g.addEdge(A, B, 1);
+  const aN = arm(A, 0), aS = arm(A, 2), aW = arm(A, 3), bN = arm(B, 0), bS = arm(B, 2), bE = arm(B, 1);
+  g.inv.light = 2; g.inv.round = 2;
+  if (variant === 'lights') { g.placeFeature(A, 'light'); g.placeFeature(B, 'light'); }
+  if (variant === 'roundabouts') { g.placeFeature(A, 'round'); g.placeFeature(B, 'round'); }
+  if (variant === 'light+roundabout') { g.placeFeature(A, 'light'); g.placeFeature(B, 'round'); }
+  const routes = [];
+  const ends = { aN, aS, aW, bN, bS, bE };
+  const entry = (arms, junction) => [arms[1], arms[0], junction]; // far end -> near -> junction
+  const exit = (arms) => [arms[0], arms[1]];
+  const fromA = { aN, aS, aW }, fromB = { bN, bS, bE };
+  for (const [ka, ra] of Object.entries(fromA)) for (const [kb, rb] of Object.entries(fromB)) {
+    routes.push([...entry(ra, A), B, ...exit(rb)]); // A side -> B side
+    routes.push([...entry(rb, B), A, ...exit(ra)]); // B side -> A side
+  }
+  void ends;
+  // isolate the traffic scenario from the rest of the game (no demand, no weekly events)
+  g.houses.length = 0;
+  g.dests.length = 0;
+  g.houseTimer = 1e9;
+  const saveWeek = MM.CFG.WEEK_SECONDS;
+  MM.CFG.WEEK_SECONDS = 1e9;
+  const saveTow = [MM.CFG.TOW_HOLDER, MM.CFG.TOW_ANY];
+  MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
+  const rnd = MM.mulberry32(99);
+  let spawned = 0, done = 0, tows = 0;
+  const origDeliver = g.deliver.bind(g);
+  g.deliver = (car) => { done++; origDeliver(car); };
+  for (let t = 0; t < 25 * 200; t++) {
+    if (t < 25 * 80 && t % 6 === 0) {
+      const r = routes[Math.floor(rnd() * routes.length)];
+      const lane = r[0] * 4 + w.dirOf(r[0], r[1]);
+      if (g.laneClear(lane, 0.45)) {
+        const car = { id: g.nextId++, color: 0, path: r.slice(), i: 0, s: 0, lane, dest: { node: r[r.length - 1], pins: 9, inbound: 1 }, house: { queue: [] }, held: -1, dead: false, stamp: -1, idle: 0 };
+        g.cars.push(car); spawned++;
+      }
+    }
+    g.update(0.04);
+    for (const e of g.events) if (e.type === 'lost') tows++;
+    g.events.length = 0;
+  }
+  [MM.CFG.TOW_HOLDER, MM.CFG.TOW_ANY] = saveTow;
+  MM.CFG.WEEK_SECONDS = saveWeek;
+  console.log(`  spawned ${spawned}, finished ${done}, still on road ${g.cars.length}, game state ${g.state}`);
+  check(spawned > 100, 'generated heavy traffic');
+  check(done === spawned && g.cars.length === 0, 'every car got through (no deadlock)');
+  check(tows === 0, 'no towing needed');
+  check(g.holders.every((x) => x === 0) && g.reserved.every((x) => x === 0), 'no leaked locks or reservations');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

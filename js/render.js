@@ -263,18 +263,24 @@
       ctx.restore();
 
       if (b.kind === 'dest') {
-        // pins
+        // pins: solid = waiting for a car, faded = a car is already on its way
         const slots = Math.max(CFG.PIN_LIMIT, b.pins);
+        const waiting = b.pins - b.inbound;
         for (let k = 0; k < b.pins; k++) {
           const ang = -Math.PI / 2 + (k / slots) * 6.2832;
           const px = x + Math.cos(ang) * 30, py = y + Math.sin(ang) * 30;
+          const solid = k < waiting;
           ctx.beginPath();
-          ctx.arc(px, py, 4.8, 0, 6.2832);
+          ctx.arc(px, py, solid ? 4.8 : 3.6, 0, 6.2832);
+          ctx.globalAlpha = solid ? 1 : 0.4;
           ctx.fillStyle = col.main;
           ctx.fill();
-          ctx.lineWidth = 1.6;
-          ctx.strokeStyle = '#fff';
-          ctx.stroke();
+          if (solid) {
+            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
         }
         if (b.overflow > 0.001) {
           const pulse = 0.6 + 0.4 * Math.sin(time * 9);

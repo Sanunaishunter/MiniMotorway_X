@@ -10,6 +10,9 @@
     HW_MULT: 2.1, // highway speed multiplier
     GAP: 0.3, // minimum following gap (in cells)
     STOP: 0.62, // stop line position before a controlled intersection
+    RELEASE: 0.3, // a car frees the intersection lock once this far past the junction
+    TOW_HOLDER: 20, // seconds a lock-holding car may be stuck before it is towed (deadlock breaker)
+    TOW_ANY: 120, // seconds any car may be stuck before it is towed
     PIN_LIMIT: 7, // pins at a destination before the overflow timer starts
     OVERFLOW_TIME: 16, // seconds the overflow meter needs to fill
     LIGHT_PERIOD: 3.6,
