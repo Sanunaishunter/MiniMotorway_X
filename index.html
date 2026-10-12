@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#dbe6dc">
+  <title>Mini Motorway X</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f6f3ea'/%3E%3Cpath d='M4 25C4 14 14 19 16 13S22 7 28 7' stroke='%238e9bb0' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3Crect x='3' y='21' width='9' height='9' rx='3' fill='%234c8dff'/%3E%3Crect x='19' y='2' width='11' height='11' rx='3' fill='%234c8dff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <canvas id="cv"></canvas>
+
+    <header id="hud">
+      <div class="pill score-pill">
+        <div class="score-num" id="score">0</div>
+        <div class="score-sub"><span>送達</span><span id="best">最高 0</span></div>
+      </div>
+
+      <div class="pill week-pill">
+        <div class="week-top"><b id="weekName">第 1 週</b><span id="dayName">週一</span></div>
+        <div class="week-bar"><i id="weekFill"></i></div>
+      </div>
+
+      <div class="hud-btns">
+        <button class="icon-btn" id="btnPause" title="暫停 (空白鍵)" aria-label="暫停">
+          <svg viewBox="0 0 24 24"><path id="pauseIcon" d="M8 5v14M16 5v14"/></svg>
+        </button>
+        <button class="icon-btn txt" id="btnSpeed" title="遊戲速度" aria-label="速度">1×</button>
+        <button class="icon-btn" id="btnSound" title="音效" aria-label="音效">
+          <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z" class="fill"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+        </button>
+        <button class="icon-btn" id="btnRestart" title="重新開始" aria-label="重新開始">
+          <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <nav id="toolbar">
+      <button class="tool active" data-tool="road" title="道路 (1)">
+        <svg viewBox="0 0 32 32"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="stroke-thick g"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="dash"/></svg>
+        <span>道路</span>
+      </button>
+      <button class="tool" data-tool="hw" title="高速公路 (2)">
+        <svg viewBox="0 0 32 32"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="stroke-thick o"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="dash"/></svg>
+        <span>高速</span><em class="badge" id="cntHw">0</em>
+      </button>
+      <button class="tool" data-tool="light" title="紅綠燈 (3)">
+        <svg viewBox="0 0 32 32"><rect x="10" y="3" width="12" height="26" rx="6" class="fill dark"/><circle cx="16" cy="9.5" r="2.8" fill="#ff5a5a"/><circle cx="16" cy="16" r="2.8" fill="#ffd24d"/><circle cx="16" cy="22.5" r="2.8" fill="#58e08a"/></svg>
+        <span>紅綠燈</span><em class="badge" id="cntLight">0</em>
+      </button>
+      <button class="tool" data-tool="round" title="圓環 (4)">
+        <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="9.5" class="stroke-thick g"/><circle cx="16" cy="16" r="3" fill="#9fd3a8"/></svg>
+        <span>圓環</span><em class="badge" id="cntRound">0</em>
+      </button>
+      <button class="tool" data-tool="erase" title="橡皮擦 (5 / 右鍵拖曳)">
+        <svg viewBox="0 0 32 32"><path d="M6 21l11-12 8 7-6 7H10z" class="fill pink"/><path d="M19 23h8" class="stroke"/></svg>
+        <span>橡皮擦</span>
+      </button>
+      <div class="chip" id="bridgeChip" title="橋樑:道路跨越水面時使用">
+        <svg viewBox="0 0 32 32"><path d="M3 20h26M7 20v-6M25 20v-6M7 14c4 0 5 4 9 4s5-4 9-4" class="stroke"/></svg>
+        <b id="cntBridge">0</b>
+      </div>
+    </nav>
+
+    <div id="toast"></div>
+
+    <div id="modal" class="hidden">
+      <div class="card" id="card"></div>
+    </div>
+  </div>
+
+  <script src="js/core.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
