@@ -102,7 +102,11 @@
   function newGame() {
     resize();
     const grid = renderer.suggestGrid();
-    ui.game = new MM.Game({ cols: grid.cols, rows: grid.rows });
+    let game = null;
+    for (let attempt = 0; attempt < 12 && !game; attempt++) {
+      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows }); } catch (e) { /* unlucky map, roll another */ }
+    }
+    ui.game = game || new MM.Game({ cols: 34, rows: 22 });
     ui.overShown = false;
     ui.overTimer = 0;
     renderer.setGame(ui.game);
@@ -342,6 +346,7 @@
     if (map[e.key] && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
   });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && ui.mode === 'play') showPause(); });
   window.addEventListener('resize', () => { resize(); });
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 

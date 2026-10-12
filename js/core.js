@@ -7,6 +7,7 @@
     CELL: 40, // world units per grid cell (nodes sit at cell centres)
     WEEK_SECONDS: 75, // length of one "week"
     SPEED: 1.7, // cells per second on a normal road
+    ACCEL: 6, // cells / s^2
     HW_MULT: 2.1, // highway speed multiplier
     GAP: 0.3, // minimum following gap (in cells)
     STOP: 0.62, // stop line position before a controlled intersection

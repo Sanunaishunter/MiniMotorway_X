@@ -156,7 +156,6 @@
 
     // ------------------------------------------------------------ cars
     carPose(car) {
-      const g = this.game, w = g.world;
       const p = car.path, i = car.i, s = car.s;
       const a = p[i], b = p[i + 1];
       const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
@@ -192,7 +191,6 @@
       out.x = lerp(ax, bx, s) + nx * OFF;
       out.y = lerp(ay, by, s) + ny * OFF;
       out.a = Math.atan2(dy, dx);
-      void w;
       return out;
     }
 

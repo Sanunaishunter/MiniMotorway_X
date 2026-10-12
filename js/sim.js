@@ -58,7 +58,6 @@
 
     // ------------------------------------------------------------ setup / buildings
     setup() {
-      const w = this.world;
       this.colorsUnlocked = 1;
       const cx0 = Math.floor(this.cols * 0.3), cx1 = Math.ceil(this.cols * 0.7);
       const cy0 = Math.floor(this.rows * 0.3), cy1 = Math.ceil(this.rows * 0.7);
@@ -68,9 +67,7 @@
         const h = this.findSpot('house', 0, { mainOnly: true });
         if (h >= 0) this.addBuilding('house', 0, h, 6 + i * 4);
       }
-      // make sure the very first roads are possible
       if (!this.dests.length || !this.houses.length) throw new Error('map generation failed');
-      void w;
     }
 
     spotOK(n, mainOnly) {
@@ -339,7 +336,7 @@
       const lane = h.node * 4 + w.dirOf(h.node, path[1]);
       if (!this.laneClear(lane, CFG.GAP * 1.4)) return false;
       h.queue.shift();
-      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, dead: false, stamp: -1, idle: 0 };
+      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, dead: false, stamp: -1, idle: 0, v: 0 };
       trip.inbound++;
       this.cars.push(car);
       let l = this.lanes.get(lane);
@@ -448,7 +445,10 @@
           }
         }
       }
-      const ds = Math.min(this.speedOf(car.lane) * dt, maxS - car.s);
+      // gentle acceleration; running into the car ahead or a stop line kills the speed
+      car.v = Math.min(this.speedOf(car.lane), (car.v || 0) + CFG.ACCEL * dt);
+      const ds = Math.min(car.v * dt, maxS - car.s);
+      if (ds < car.v * dt - 1e-9) car.v = Math.max(0, ds / dt);
       if (ds > 0) car.s += ds;
       if (car.held >= 0 && car.held === a && car.s >= CFG.RELEASE) { this.holders[car.held]--; car.held = -1; }
       if (ds > 1e-6) car.idle = 0;
