@@ -136,6 +136,7 @@
     round: '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="9.5" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="3" fill="#9fd3a8"/></svg>',
     bridge: '<svg viewBox="0 0 32 32" fill="none" stroke="#2f3a4b" stroke-width="2.4" stroke-linecap="round"><rect x="0" y="22" width="32" height="8" fill="#b7dcec" stroke="none"/><path d="M3 20h26M7 20v-6M25 20v-6M7 14c4 0 5 4 9 4s5-4 9-4"/></svg>',
     hw: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#f4ab45" stroke-width="6"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#fff" stroke-width="1.4" stroke-dasharray="2.5 3"/></svg>',
+    wide: '<svg viewBox="0 0 32 32"><rect x="7" y="2" width="18" height="28" rx="3" fill="#767d89" stroke="#fff" stroke-width="1.6"/><path d="M15.2 3V29M16.8 3V29" stroke="#f0c52f" stroke-width="1.3"/><path d="M11.4 4V28M20.6 4V28" stroke="#fff" stroke-width="1.2" stroke-dasharray="3 3"/></svg>',
     ovp: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M3 21H29" stroke="#8e9bb0" stroke-width="6"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>',
     tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
     big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
@@ -156,7 +157,7 @@
       <ol class="tips">
         <li><b>拖曳</b>畫出道路,把房子連到<b>同顏色</b>的目的地。</li>
         <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿即<b>遊戲結束</b>。</li>
-        <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路、高架、隧道。</li>
+        <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路、四線道、高架、隧道。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
         <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
       </ol>
@@ -287,12 +288,18 @@
     }
     // a stroke never continues *through* a building: it can only start or end on one
     if (w.bld[cur] && cur !== stroke.start) return;
-    const kind = stroke.tool === 'hw' ? 2 : 1;
+    const kind = stroke.tool === 'hw' ? 2 : stroke.tool === 'wide' ? 3 : 1;
     const r = g.addEdge(cur, next, kind);
     if (r.ok) sfx.road();
     else if (r.reason === 'nobridge') deny('橋樑不足!下週的升級可以獲得更多');
     else if (r.reason === 'nohw') deny('高速公路數量不足');
     else if (r.reason === 'hw-water') deny('高速公路不能建在水上');
+    else if (r.reason === 'nowide') deny('四線道數量不足');
+    else if (r.reason === 'wide-water') deny('四線道不能建在橋樑上');
+    else if (r.reason === 'wide-bld') deny('連到房子的路不能拓寬');
+    else if (r.reason === 'wide-hw') deny('高速公路不能改成四線道');
+    else if (r.reason === 'hw-wide') deny('四線道不能改成高速公路');
+    else if (r.reason === 'wide-ring') deny('這段路不能拓寬');
     else if (r.reason === 'island') deny('圓環中央是綠地,不能在這裡鋪路');
     else if (r.reason === 'tunnel') deny('隧道入口的這一側不能鋪路');
   }
@@ -468,7 +475,7 @@
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'ovp', 6: 'tun', 7: 'erase' };
+    const map = { 1: 'road', 2: 'hw', 3: 'wide', 4: 'light', 5: 'round', 6: 'ovp', 7: 'tun', 8: 'erase' };
     const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
@@ -504,7 +511,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'ovp', 'tun']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {

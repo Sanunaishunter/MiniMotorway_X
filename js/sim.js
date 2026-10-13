@@ -9,6 +9,7 @@
     { id: 'round', amount: 4, title: '圓環', desc: '路口可同時容納兩輛車,減少停等。' },
     { id: 'bridge', amount: 6, title: '橋樑', desc: '讓道路可以跨越河流與湖泊(每段 1 個)。' },
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
+    { id: 'wide', amount: 10, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在橋樑、連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
@@ -26,8 +27,10 @@
       const n = this.world.n;
 
       this.holders = new Int16Array(n); // cars currently inside each controlled intersection
+      this.lastEntry = new Float64Array(n); // when a car last took the lock of each junction
       this.laneLoad = new Int16Array(n * 4);
       this.reserved = new Int16Array(n * 4); // exit-lane slots promised to cars that hold an intersection lock
+      this.reservedSlot = new Int16Array(n * 8); // the same, split per lane slot (index lane*2 + slot)
       this.lights = new Map(); // node -> {green, timer, pending, waiting:[bool,bool]}
       this.lanes = new Map(); // laneId -> cars (rebuilt every step)
       this.cars = [];
@@ -45,7 +48,7 @@
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { bridge: 4, hw: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0 };
+      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0 };
       this.bigs = new Map(); // big roundabouts: id -> {id, center, nodes[8] in circulation order}
       this.bigSeq = 0;
       this.nextId = 1;
@@ -169,8 +172,21 @@
       if (w.tun.has(a * 4 + dir) || w.tun.has(b * 4 + ((dir + 2) & 3))) return { ok: false, reason: 'tunnel' };
       const cur = w.rawBetween(a, b) & 3;
       const wet = w.isBridgeEdge(a, b);
+      if (kind === 3) {
+        if (wet) return { ok: false, reason: 'wide-water' };
+        if (w.bld[a] || w.bld[b]) return { ok: false, reason: 'wide-bld' };
+        if (cur === 2) return { ok: false, reason: 'wide-hw' };
+        if (w.rawBetween(a, b) >> 2) return { ok: false, reason: 'wide-ring' };
+        if (cur === 1 && w.isWideBetween(a, b)) return { ok: false, reason: 'same' };
+        if (this.inv.wide <= 0) return { ok: false, reason: 'nowide' };
+        this.inv.wide--;
+        w.setEdge(a, b, 1, false, true);
+        this.events.push({ type: 'road', hw: true });
+        return { ok: true };
+      }
       if (kind === 2) {
         if (wet) return { ok: false, reason: 'hw-water' };
+        if (cur === 1 && w.isWideBetween(a, b)) return { ok: false, reason: 'hw-wide' };
         if (cur === 2) return { ok: false, reason: 'same' };
         if (this.inv.hw <= 0) return { ok: false, reason: 'nohw' };
         this.inv.hw--;
@@ -195,6 +211,7 @@
       if (!cur) return { ok: false };
       if (w.ringId[a] && w.ringId[a] === w.ringId[b]) return { ok: false, reason: 'ring' }; // part of a big roundabout
       if (cur === 2) this.inv.hw++;
+      else if (w.isWideBetween(a, b)) this.inv.wide++;
       else if (w.isBridgeEdge(a, b)) this.inv.bridge++;
       w.setEdge(a, b, 0);
       this.cleanFeatures([a, b]);
@@ -273,7 +290,7 @@
           const m = w.nbGrid(n, d);
           if (m < 0 || !inside.has(m)) continue;
           const raw = w.rawBetween(n, m);
-          if (raw) { if ((raw & 3) === 2) this.inv.hw++; w.setEdge(n, m, 0); }
+          if (raw) { if ((raw & 3) === 2) this.inv.hw++; else if (w.isWideBetween(n, m)) this.inv.wide++; w.setEdge(n, m, 0); }
         }
       }
       const id = ++this.bigSeq;
@@ -375,7 +392,7 @@
       const t = w.edge(u, d);
       const len = t === 3 ? w.tun.get(u * 4 + d).len : 1;
       let c = len / (t === 2 ? CFG.HW_MULT : t === 3 ? CFG.TUN_MULT : 1);
-      c += 0.3 * this.laneLoad[u * 4 + d];
+      c += (0.3 * this.laneLoad[u * 4 + d]) / this.slotsOf(u * 4 + d);
       if (w.isJunction(v)) {
         const f = w.feat[v];
         c += f === 1 ? 0.7 : f === 2 || w.ringId[v] ? 0.25 : 0.55;
@@ -473,13 +490,41 @@
       return (CFG.SPEED * (t === 2 ? CFG.HW_MULT : t === 3 ? CFG.TUN_MULT : 1)) / this.lenOf(lane);
     }
 
-    /** True if no car is within `needCells` of the start of the lane. */
-    laneClear(lane, needCells) {
+    /** Number of lane slots (cars side by side) on a lane: 2 on a four-lane road, else 1. */
+    slotsOf(lane) {
+      return this.world.isWideDir(lane >> 2, lane & 3) && !this.world.tun.has(lane) ? 2 : 1;
+    }
+
+    /** Following gap (cells) between two cars in the same slot of this lane. */
+    gapOf(lane) { return CFG.GAP * (this.slotsOf(lane) > 1 ? CFG.WIDE_GAP : 1); }
+
+    /** Distance (cells) past the junction at which a car on this lane frees the junction lock. */
+    relOf(lane) { return CFG.RELEASE / (this.slotsOf(lane) > 1 ? CFG.WIDE_GAP : 1); }
+
+    /** True if no car (in `slot`, or in any slot when omitted) is within `needCells` of the start of the lane. */
+    laneClear(lane, needCells, slot) {
       const l = this.lanes.get(lane);
       if (!l) return true;
-      const need = needCells / this.lenOf(lane);
-      for (const o of l) if (!o.dead && o.lane === lane && o.s < need) return false;
+      const need = (needCells * (this.slotsOf(lane) > 1 ? CFG.WIDE_GAP : 1)) / this.lenOf(lane);
+      for (const o of l) if (!o.dead && o.lane === lane && (slot == null || (o.slot | 0) === slot) && o.s < need) return false;
       return true;
+    }
+
+    /** The slot a car should take on lane `nl` (0 on ordinary roads): the emptier one, preferring the side it will turn to. */
+    pickSlot(car, nl) {
+      if (this.slotsOf(nl) < 2) return 0;
+      const cnt = [this.reservedSlot[nl * 2], this.reservedSlot[nl * 2 + 1]];
+      const l = this.lanes.get(nl);
+      if (l) for (const o of l) if (!o.dead && o.lane === nl) cnt[o.slot | 0]++;
+      if (cnt[0] !== cnt[1]) return cnt[0] < cnt[1] ? 0 : 1;
+      const w = this.world, p = car.path;
+      const b = nl >> 2, i = p.indexOf(b, car.i);
+      if (i >= 0 && p[i + 2] !== undefined) {
+        const turn = (w.dirOf(p[i + 1], p[i + 2]) - w.dirOf(b, p[i + 1]) + 4) & 3; // 1 = right turn, 3 = left turn
+        if (turn === 1) return 1; // the outer (kerb) lane
+        if (turn === 3) return 0; // the inner lane
+      }
+      return (car.slot | 0) % 2;
     }
 
     dispatch(h) {
@@ -503,7 +548,7 @@
       const lane = h.node * 4 + w.dirOf(h.node, path[1]);
       if (!this.laneClear(lane, CFG.GAP * 1.4)) return false;
       h.queue.shift();
-      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, dead: false, stamp: -1, idle: 0, v: 0 };
+      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
       trip.inbound++;
       this.cars.push(car);
       let l = this.lanes.get(lane);
@@ -549,31 +594,45 @@
       const a = car.path[car.i];
       const c = car.path[car.i + 2];
       if (c === undefined) return false;
-      // Box-junction rule with reservations: the exit lane must have a free slot for this car (cars already in it plus cars
-      // that hold a lock and are about to enter). A lane that ends in a controlled junction queues at the stop line, so it
-      // only has room for 2 cars if a lock holder is still to be able to reach the release point; otherwise 3.
+      // Box-junction rule with reservations: the exit lane must have a free place for this car (cars already in it plus cars
+      // that hold a lock and are about to enter). Each slot of the lane is checked on its own. A lane that ends in a
+      // controlled junction queues at the stop line, so it has room for fewer cars if a lock holder is still to be able to
+      // reach the release point.
       const nl = b * 4 + w.dirOf(b, c);
-      let used = this.reserved[nl];
-      const lst = this.lanes.get(nl);
-      if (lst) for (const o of lst) if (!o.dead && o.lane === nl) used++;
+      const slots = this.slotsOf(nl);
       const controlled = car.path[car.i + 3] !== undefined && w.isJunction(c);
-      // queue positions (in cells from the lane start): the first car waits at p1, the next ones every GAP behind it, and the
+      // queue positions (cells from the lane start): the first car waits at p1, the next ones every gap behind it, and the
       // last car must still leave room for a lock holder to reach the release point
       const p1 = this.lenOf(nl) - (controlled ? 1 - CFG.STOP : 0);
-      const cap = Math.floor((p1 - 2 * CFG.RELEASE) / CFG.GAP + 1e-9) + 2;
-      if (used + 1 > cap) return false;
+      // m cars ahead wait at p1, p1-gap, ...; the entering car stops at p1 - m*gap and must still be past the release point
+      const capSlot = Math.floor((p1 - this.relOf(nl)) / this.gapOf(nl) + 1e-9) + 1;
+      const cnt = [this.reservedSlot[nl * 2], this.reservedSlot[nl * 2 + 1]];
+      const lst = this.lanes.get(nl);
+      if (lst) for (const o of lst) if (!o.dead && o.lane === nl) cnt[o.slot | 0]++;
+      const first = this.pickSlot(car, nl);
+      let slot = -1;
+      for (let k = 0; k < slots && slot < 0; k++) { const s2 = (first + k) % slots; if (cnt[s2] + 1 <= capSlot) slot = s2; }
+      if (slot < 0) return false;
       const f = w.feat[b];
       if (f === 1) {
         const L = this.lights.get(b);
         if (L && (L.pending || L.green !== (w.dirOf(a, b) & 1))) return false;
       } else if (f === 2 || w.ringId[b]) {
         if (this.holders[b] >= 2) return false;
+      } else if (w.hasWide(b)) {
+        // a junction with a four-lane road passes two cars at a time, but not closer together than WIDE_HEADWAY
+        if (this.holders[b] >= 2 || (this.holders[b] >= 1 && this.time - this.lastEntry[b] < CFG.WIDE_HEADWAY)) return false;
       } else if (this.holders[b] >= 1) {
         return false;
       }
+      this.lastEntry[b] = this.time;
       this.holders[b]++;
       this.reserved[nl]++;
+      this.reservedSlot[nl * 2 + slot]++;
       car.resLane = nl;
+      car.resSlot = slot;
+      car.nslot = slot;
+      car.nslotFor = nl;
       return true;
     }
 
@@ -588,7 +647,12 @@
     }
 
     dropReservation(car) {
-      if (car.resLane >= 0) { this.reserved[car.resLane]--; car.resLane = -1; }
+      if (car.resLane >= 0) {
+        this.reserved[car.resLane]--;
+        this.reservedSlot[car.resLane * 2 + (car.resSlot | 0)]--;
+        car.resLane = -1;
+        car.resSlot = -1;
+      }
     }
 
     stepCar(car, list, k, dt) {
@@ -599,12 +663,20 @@
       const a = p[i], b = p[i + 1];
       const last = i + 1 === p.length - 1;
       const len = this.lenOf(car.lane); // lane length in cells; s runs 0..1 along it
+      const wideLane = this.slotsOf(car.lane) > 1;
+      const gapS = this.gapOf(car.lane) / len;
       let maxS = 1;
       for (let j = k - 1; j >= 0; j--) {
         const o = list[j];
         if (o.dead || o.lane !== car.lane) continue;
-        maxS = Math.min(maxS, o.s - CFG.GAP / len);
+        if (wideLane && (o.slot | 0) !== (car.slot | 0)) continue; // cars in the other lane of a four-lane road do not block
+        maxS = Math.min(maxS, o.s - gapS);
         break;
+      }
+      if (!last && car.nslotFor !== b * 4 + w.dirOf(b, p[i + 2])) { // choose the slot for the next lane (the junction may overrule it)
+        const nl0 = b * 4 + w.dirOf(b, p[i + 2]);
+        car.nslot = this.pickSlot(car, nl0);
+        car.nslotFor = nl0;
       }
       if (!last && car.held !== b && w.isJunction(b)) {
         const base = w.feat[b] === 2 || w.ringId[b] ? 0.72 : CFG.STOP;
@@ -623,7 +695,7 @@
       const ds = Math.min(car.v * dt, maxS - car.s);
       if (ds < car.v * dt - 1e-9) car.v = Math.max(0, ds / dt);
       if (ds > 0) car.s += ds;
-      if (car.held >= 0 && car.held === a && car.s >= CFG.RELEASE / len) { this.holders[car.held]--; car.held = -1; }
+      if (car.held >= 0 && car.held === a && car.s >= this.relOf(car.lane) / len) { this.holders[car.held]--; car.held = -1; }
       if (ds > 1e-6) car.idle = 0;
       else {
         car.idle += dt;
@@ -641,7 +713,16 @@
         }
         const c = p[i + 2];
         const nl = b * 4 + w.dirOf(b, c);
-        if (!this.laneClear(nl, CFG.GAP * 1.1)) { car.s = 1; return; }
+        let ns = car.nslotFor === nl ? car.nslot | 0 : 0;
+        if (!this.laneClear(nl, CFG.GAP * 1.1, ns)) {
+          // blocked in the chosen lane of a four-lane road: use the other one if it is free and nothing was promised to us
+          const other = 1 - ns;
+          if (this.slotsOf(nl) > 1 && car.resLane !== nl && this.laneClear(nl, CFG.GAP * 1.1, other)) ns = other;
+          else { car.s = 1; return; }
+        }
+        car.pslot = car.slot | 0;
+        car.slot = ns;
+        car.nslotFor = -1;
         car.i++;
         car.s = 0;
         car.lane = nl;

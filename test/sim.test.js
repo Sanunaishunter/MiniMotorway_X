@@ -60,6 +60,13 @@ function sanity(g) {
     for (const c of g.cars) { if (c.held >= 0) h[c.held]++; if (c.resLane >= 0) r[c.resLane]++; }
     for (let i = 0; i < h.length; i++) if (h[i] !== g.holders[i]) return 'holder accounting off at ' + i;
     for (let i = 0; i < r.length; i++) if (r[i] !== g.reserved[i]) return 'reservation accounting off at ' + i;
+    const rs = new Int16Array(g.reservedSlot.length);
+    for (const c of g.cars) if (c.resLane >= 0) rs[c.resLane * 2 + (c.resSlot | 0)]++;
+    for (let i = 0; i < rs.length; i++) if (rs[i] !== g.reservedSlot[i]) return 'slot reservation accounting off at ' + i;
+    for (const c of g.cars) {
+      const sl = c.slot | 0;
+      if (sl < 0 || sl > 1 || (sl === 1 && g.slotsOf(c.lane) < 2)) return 'car in a lane slot that does not exist';
+    }
   }
   return null;
 }
@@ -96,7 +103,7 @@ console.log('3. unconnected houses eventually cause game over');
 console.log('4. random road editing stress (no crashes, invariants hold)');
 {
   const g = new MM.Game({ seed: 11 });
-  g.inv.light = 99; g.inv.round = 99; g.inv.hw = 99; g.inv.bridge = 99; g.inv.ovp = 99; g.inv.tun = 99; g.inv.big = 99;
+  g.inv.light = 99; g.inv.round = 99; g.inv.hw = 99; g.inv.bridge = 99; g.inv.ovp = 99; g.inv.tun = 99; g.inv.big = 99; g.inv.wide = 99;
   const rnd = MM.mulberry32(5);
   let err = null;
   for (let t = 0; t < 60 * 20 && g.state !== 'over'; t++) {
@@ -107,7 +114,8 @@ console.log('4. random road editing stress (no crashes, invariants hold)');
     const m = g.world.nb(n, d);
     const r = rnd();
     if (m >= 0) {
-      if (r < 0.45) g.addEdge(n, m, 1);
+      if (r < 0.40) g.addEdge(n, m, 1);
+      else if (r < 0.46) g.addEdge(n, m, 3);
       else if (r < 0.55) g.addEdge(n, m, 2);
       else if (r < 0.75) g.removeEdge(n, m);
       else if (r < 0.85) g.placeFeature(n, 'light');
@@ -285,7 +293,8 @@ function isolate(g) {
 function fakeCar(g, path) {
   const w = g.world;
   const lane = path[0] * 4 + w.dirOf(path[0], path[1]);
-  const car = { id: g.nextId++, color: 0, path: path.slice(), i: 0, s: 0, lane, dest: { node: path[path.length - 1], pins: 9, inbound: 1 }, house: { queue: [] }, held: -1, resLane: -1, dead: false, stamp: -1, idle: 0, v: 0 };
+  const car = { id: g.nextId++, color: 0, path: path.slice(), i: 0, s: 0, lane, dest: { node: path[path.length - 1], pins: 9, inbound: 1 }, house: { queue: [] }, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
+  car.slot = g.pickSlot(car, lane);
   g.cars.push(car);
   return car;
 }
@@ -479,6 +488,174 @@ console.log('10. big roundabout');
   check(g.holders.every((x) => x === 0) && g.reserved.every((x) => x === 0), 'no leaked locks or reservations');
   check(g.removeBigAt(NE) && g.inv.big === 2 && !g.bigs.size && w.island[c] === 0, 'removing the roundabout refunds it');
   check(w.edgeBetween(NE, N) === 0 && w.edgeBetween(W - 1, W) > 0, 'ring gone, approach stubs remain');
+}
+MM.CFG.WEEK_SECONDS = WEEK;
+
+console.log('11. four-lane roads: rules');
+{
+  const g = new MM.Game({ seed: 21 });
+  isolate(g);
+  const w = g.world;
+  const o = findOpen(g, 8, 4);
+  const A = o + w.cols, B = A + 1, C2 = A + 2, D = A + 3;
+  check(g.addEdge(A, B, 3).reason === 'nowide', 'a four-lane road needs inventory');
+  g.inv.wide = 5;
+  check(g.addEdge(A, B, 3).ok && g.inv.wide === 4 && w.isWideBetween(A, B), 'new four-lane road built');
+  check(g.addEdge(A, B, 3).reason === 'same', 'cannot widen what is already four-lane');
+  check(g.slotsOf(A * 4 + 1) === 2 && g.slotsOf(B * 4 + 3) === 2, 'both directions have two lanes');
+  g.addEdge(B, C2, 1);
+  check(g.slotsOf(B * 4 + 1) === 1, 'an ordinary road still has one lane per direction');
+  check(g.addEdge(B, C2, 3).ok && g.inv.wide === 3, 'an existing two-lane road can be widened');
+  g.inv.hw = 3;
+  check(g.addEdge(A, B, 2).reason === 'hw-wide', 'an expressway cannot replace a four-lane road');
+  g.addEdge(C2, D, 2);
+  check(g.addEdge(C2, D, 3).reason === 'wide-hw', 'a four-lane road cannot replace an expressway');
+  g.removeEdge(A, B);
+  check(!w.isWideBetween(A, B) && g.inv.wide === 4, 'erasing a four-lane road refunds it');
+  // never next to a building, over water, or on a one-way ring
+  const house = g.addBuilding('house', 0, A + 3 * w.cols);
+  const nb = A + 2 * w.cols;
+  check(g.addEdge(nb, house.node, 3).reason === 'wide-bld', 'roads touching a building stay two-lane');
+  const wet = (() => { for (let n = 0; n < w.n; n++) { const e = w.nb(n, 1); if (w.water[n] && e >= 0 && !w.water[e]) return [e, n]; } return null; })();
+  if (wet) { g.inv.bridge = 5; check(g.addEdge(wet[0], wet[1], 3).reason === 'wide-water', 'no four-lane bridges'); }
+  check(g.slotsOf(A * 4 + 1) === 1, 'after the erase the lane is single again');
+}
+
+console.log('12. four-lane roads carry about 1.7x the traffic');
+{
+  const corridor = ({ wide, stubs, fast, seconds = 100, narrowTail = false }) => {
+    let g, o = -1;
+    for (let seed = 21; o < 0; seed++) { g = new MM.Game({ seed, cols: 40, rows: 20 }); o = findOpen(g, 20, 5); }
+    isolate(g);
+    const w = g.world;
+    const row = o + 2 * w.cols, L = 18;
+    g.inv.wide = 99;
+    const nodes = [];
+    for (let k = 0; k <= L; k++) nodes.push(row + k);
+    for (let k = 0; k < L; k++) g.addEdge(nodes[k], nodes[k + 1], wide && !(narrowTail && k >= L / 2) ? 3 : 1);
+    if (stubs) for (let k = 3; k < L; k += 4) g.addEdge(nodes[k], nodes[k] - w.cols, 1);
+    let done = 0, err = null;
+    const orig = g.deliver.bind(g);
+    g.deliver = (car) => { if (g.time > 20) done++; orig(car); };
+    const saveTow = [MM.CFG.TOW_HOLDER, MM.CFG.TOW_ANY];
+    MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
+    for (let t = 0; t < 25 * seconds; t++) {
+      for (let k = 0; k < 2; k++) {
+        const car = fakeCar(g, nodes.slice());
+        g.cars.pop(); // fakeCar already pushed it; only keep it if there is room
+        car.v = fast ? g.speedOf(car.lane) : 0;
+        if (g.laneClear(car.lane, MM.CFG.GAP * (fast ? 1.02 : 1.4), car.slot)) g.cars.push(car);
+      }
+      g.update(0.04);
+      g.events.length = 0;
+      err = err || sanity(g);
+    }
+    MM.CFG.TOW_HOLDER = saveTow[0]; MM.CFG.TOW_ANY = saveTow[1];
+    return { rate: done / (seconds - 20), err };
+  };
+  const freeNarrow = corridor({ wide: false, fast: true }), freeWide = corridor({ wide: true, fast: true });
+  const jNarrow = corridor({ wide: false, stubs: true }), jWide = corridor({ wide: true, stubs: true });
+  const r1 = freeWide.rate / freeNarrow.rate, r2 = jWide.rate / jNarrow.rate;
+  console.log(`  free-flowing road: x${r1.toFixed(2)}   road with junctions: x${r2.toFixed(2)}`);
+  check(!freeNarrow.err && !freeWide.err && !jNarrow.err && !jWide.err, 'invariants hold (' + (freeNarrow.err || freeWide.err || jNarrow.err || jWide.err) + ')');
+  check(r1 > 1.6 && r1 < 1.85, 'free-flowing four-lane road passes about 1.7x the cars');
+  check(r2 > 1.55 && r2 < 1.85, 'a road with junctions passes about 1.7x the cars');
+}
+
+console.log('13. four-lane roads: merges and junctions do not deadlock (towing disabled)');
+{
+  for (const variant of ['four-lane into two-lane', 'four-lane crossing two-lane', 'two four-lane roads crossing', 'four-lane with a light']) {
+    const g = new MM.Game({ seed: 21 });
+    isolate(g);
+    const w = g.world;
+    g.inv.wide = 99; g.inv.light = 2;
+    const o = findOpen(g, 11, 7);
+    const at = (c, r) => o + r * w.cols + c;
+    const roadH = (r, c0, c1, kind) => { for (let c = c0; c < c1; c++) g.addEdge(at(c, r), at(c + 1, r), kind); };
+    const roadV = (c, r0, r1, kind) => { for (let r = r0; r < r1; r++) g.addEdge(at(c, r), at(c, r + 1), kind); };
+    let routes = [];
+    if (variant === 'four-lane into two-lane') {
+      roadH(3, 0, 5, 3); roadH(3, 5, 10, 1);
+      routes = [[at(0, 3), at(10, 3)]];
+    } else {
+      roadH(3, 0, 10, 3);
+      roadV(5, 0, 6, variant === 'two four-lane roads crossing' ? 3 : 1);
+      if (variant === 'four-lane with a light') g.placeFeature(at(5, 3), 'light');
+      routes = [[at(0, 3), at(10, 3)], [at(10, 3), at(0, 3)], [at(5, 0), at(5, 6)], [at(5, 6), at(5, 0)], [at(0, 3), at(5, 6)], [at(10, 3), at(5, 0)], [at(5, 0), at(0, 3)], [at(5, 6), at(10, 3)]];
+    }
+    const saveTow = [MM.CFG.TOW_HOLDER, MM.CFG.TOW_ANY];
+    MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
+    const rnd = MM.mulberry32(5);
+    let spawned = 0, done = 0, err = null;
+    const orig = g.deliver.bind(g);
+    g.deliver = (car) => { done++; orig(car); };
+    for (let t = 0; t < 25 * 260; t++) {
+      if (t < 25 * 100 && t % 5 === 0) {
+        const [a, b] = routes[Math.floor(rnd() * routes.length)];
+        const path = g.route(a, b, -1);
+        if (path) {
+          const lane = path[0] * 4 + w.dirOf(path[0], path[1]);
+          const car = fakeCar(g, path);
+          g.cars.pop();
+          if (g.laneClear(lane, 0.45, car.slot)) { g.cars.push(car); spawned++; }
+        }
+      }
+      g.update(0.04);
+      g.events.length = 0;
+      err = err || sanity(g);
+    }
+    MM.CFG.TOW_HOLDER = saveTow[0]; MM.CFG.TOW_ANY = saveTow[1];
+    console.log(`  ${variant}: spawned ${spawned}, finished ${done}, still on road ${g.cars.length}`);
+    check(!err, variant + ': invariants hold (' + err + ')');
+    check(spawned > 80 && done === spawned && g.cars.length === 0, variant + ': every car got through');
+    check(g.holders.every((x) => x === 0) && g.reserved.every((x) => x === 0) && g.reservedSlot.every((x) => x === 0), variant + ': no leaked locks or reservations');
+  }
+}
+MM.CFG.WEEK_SECONDS = WEEK;
+
+console.log('14. a lock holder is never boxed in on a four-lane road (regression)');
+{
+  // J1 and J2 are adjacent junctions on a four-lane road. J2's light is red for the main road for ever, so the lane J1 -> J2 fills up. Whatever happens,
+  // cars that took J1's lock must still be able to reach the release point, so cross traffic through J1 must keep flowing.
+  const g = new MM.Game({ seed: 21 });
+  isolate(g);
+  const w = g.world;
+  g.inv.wide = 99;
+  const o = findOpen(g, 9, 6);
+  const at = (c, r) => o + r * w.cols + c;
+  for (let c = 0; c < 8; c++) g.addEdge(at(c, 3), at(c + 1, 3), 3);
+  for (let r = 0; r < 5; r++) { g.addEdge(at(3, r), at(3, r + 1), 1); g.addEdge(at(4, r), at(4, r + 1), 1); }
+  const J1 = at(3, 3), J2 = at(4, 3);
+  g.inv.light = 1;
+  g.placeFeature(J2, 'light');
+  const L2 = g.lights.get(J2);
+  L2.green = 0; // vertical axis green...
+  L2.timer = -1e12; // ...and it never changes, so east-bound traffic waits at J2 forever
+  let done = 0, err = null, stuckHolder = 0;
+  const crossDone = [];
+  const orig = g.deliver.bind(g);
+  g.deliver = (car) => { done++; if (car.path.includes(at(3, 0))) crossDone.push(car.id); orig(car); };
+  const saveTow = [MM.CFG.TOW_HOLDER, MM.CFG.TOW_ANY];
+  MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
+  for (let t = 0; t < 25 * 120; t++) {
+    if (t % 6 === 0) {
+      const east = g.route(at(0, 3), at(8, 3), -1);
+      if (east) { const car = fakeCar(g, east); g.cars.pop(); if (g.laneClear(car.lane, 0.45, car.slot)) g.cars.push(car); }
+    }
+    if (t % 50 === 0) {
+      const cross = g.route(at(3, 0), at(3, 5), -1);
+      if (cross) { const car = fakeCar(g, cross); g.cars.pop(); if (g.laneClear(car.lane, 0.45, car.slot)) g.cars.push(car); }
+    }
+    g.update(0.04);
+    g.events.length = 0;
+    err = err || sanity(g);
+    for (const c of g.cars) if (c.held === J1 && c.idle > 3) stuckHolder++;
+  }
+  MM.CFG.TOW_HOLDER = saveTow[0]; MM.CFG.TOW_ANY = saveTow[1];
+  console.log(`  cross cars through the jammed neighbour: ${crossDone.length}, holders stuck: ${stuckHolder}`);
+  check(!err, 'invariants hold (' + err + ')');
+  check(stuckHolder === 0, 'no car ever sits on J1 holding its lock without being able to leave');
+  check(crossDone.length >= 20, 'cross traffic keeps flowing through J1 (' + crossDone.length + ' cars)');
 }
 MM.CFG.WEEK_SECONDS = WEEK;
 

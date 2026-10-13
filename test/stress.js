@@ -56,6 +56,11 @@ function useInventory(g, rnd) {
     const n = Math.floor(rnd() * w.n);
     if (w.deg(n) > 0 || w.deg(w.nbGrid(n, 0) < 0 ? n : w.nbGrid(n, 0)) > 0) g.placeBig(n);
   }
+  // widen random stretches into four-lane roads
+  for (let n = 0; n < w.n && g.inv.wide > 0; n++) {
+    const e = w.nb(n, 1);
+    if (e >= 0 && w.eE[n] === 1 && !w.water[n] && !w.water[e] && !w.bld[n] && !w.bld[e] && rnd() < 0.35) g.addEdge(n, e, 3);
+  }
   for (let n = 0; n < w.n && g.inv.hw > 0; n++) {
     const e = w.nb(n, 1);
     if (e >= 0 && w.eE[n] === 1 && !w.water[n] && !w.water[e] && rnd() < 0.3) g.addEdge(n, e, 2);
@@ -96,6 +101,9 @@ for (let seed = 1; seed <= seeds; seed++) {
     const h = new Int16Array(g.holders.length), r = new Int16Array(g.reserved.length);
     for (const c of g.cars) { if (c.held >= 0) h[c.held]++; if (c.resLane >= 0) r[c.resLane]++; }
     for (let i = 0; i < h.length; i++) if (h[i] !== g.holders[i]) err = err || new Error('holder leak at ' + i);
+    const rsl = new Int16Array(g.reservedSlot.length);
+    for (const c of g.cars) if (c.resLane >= 0) rsl[c.resLane * 2 + (c.resSlot | 0)]++;
+    for (let i = 0; i < rsl.length; i++) if (rsl[i] !== g.reservedSlot[i]) err = err || new Error('slot reservation leak at ' + i);
     for (let i = 0; i < r.length; i++) if (r[i] !== g.reserved[i]) err = err || new Error('reservation leak at ' + i);
   }
   if (err) { bad++; console.error('seed', seed, 'ERROR', err.stack); }

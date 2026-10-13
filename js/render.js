@@ -23,6 +23,7 @@
   const CAR_KINDS = ['sedan', 'sedan', 'kei', 'kei', 'van', 'truck', 'taxi']; // body styles, picked by car id
   const R_NARROW = 16; // asphalt width of an ordinary (two-lane) road
   const R_HW = 18; // ... of an expressway
+  const R_WIDE = 32; // ... of a four-lane road
   const OFF = 4.0; // lane offset from the road centre line
   const lerp = (a, b, t) => a + (b - a) * t;
   const easeOutBack = (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
@@ -198,6 +199,9 @@
     }
 
     // ------------------------------------------------------------ cars
+    /** Distance of a lane's centre from the road's centre line: 4 on a two-lane road, 4 (inner) or 12 (outer) on a four-lane one. */
+    laneOff(lane, slot) { return this.game.slotsOf(lane) > 1 ? (slot ? 12 : 4) : OFF; }
+
     carPose(car) {
       const p = car.path, i = car.i, s = car.s;
       const len = this.game.lenOf(car.lane); // lane length in cells (tunnels are long)
@@ -208,16 +212,23 @@
       const out = this._pose;
       const nx = -dy, ny = dx;
       const c = p[i + 2], pr = p[i - 1];
-      const corner = (nodeN, din, dout, t) => {
+      const g = this.game, w = g.world;
+      // lateral offset of the lane the car is in / is about to enter / came from (a four-lane road has an inner and an outer lane)
+      const offCur = this.laneOff(car.lane, car.slot);
+      const nlane = c !== undefined ? b * 4 + w.dirOf(b, c) : -1;
+      const offNext = nlane >= 0 ? this.laneOff(nlane, car.nslotFor === nlane ? car.nslot : 0) : offCur;
+      const offPrev = pr !== undefined ? this.laneOff(pr * 4 + w.dirOf(pr, a), car.pslot | 0) : offCur;
+      const corner = (nodeN, din, dout, t, offIn, offOut) => {
         const X = this.nodeX(nodeN), Y = this.nodeY(nodeN);
         const nix = -din[1], niy = din[0], nox = -dout[1], noy = dout[0];
         const dot = nix * nox + niy * noy;
         if (dot < -0.9) return false;
         const q = C * 0.25;
-        const p0x = X - din[0] * q + nix * OFF, p0y = Y - din[1] * q + niy * OFF;
-        const p2x = X + dout[0] * q + nox * OFF, p2y = Y + dout[1] * q + noy * OFF;
-        const k = OFF / (1 + dot);
-        const cx = X + (nix + nox) * k, cy = Y + (niy + noy) * k;
+        const p0x = X - din[0] * q + nix * offIn, p0y = Y - din[1] * q + niy * offIn;
+        const p2x = X + dout[0] * q + nox * offOut, p2y = Y + dout[1] * q + noy * offOut;
+        // control point: where the two offset lines meet (a turn), or halfway between them (going straight on)
+        const cx = dot > 0.99 ? X + (nix * offIn + nox * offOut) / 2 : X + nix * offIn + nox * offOut;
+        const cy = dot > 0.99 ? Y + (niy * offIn + noy * offOut) / 2 : Y + niy * offIn + noy * offOut;
         const u = 1 - t;
         out.x = u * u * p0x + 2 * u * t * cx + t * t * p2x;
         out.y = u * u * p0y + 2 * u * t * cy + t * t * p2y;
@@ -228,13 +239,13 @@
       };
       if (s > 1 - zone && c !== undefined) {
         const cx = Math.sign(this.nodeX(c) - bx), cy = Math.sign(this.nodeY(c) - by);
-        if (corner(b, [dx, dy], [cx, cy], (s - (1 - zone)) * len * 2)) return out;
+        if (corner(b, [dx, dy], [cx, cy], (s - (1 - zone)) * len * 2, offCur, offNext)) return out;
       } else if (s < zone && pr !== undefined) {
         const px = Math.sign(ax - this.nodeX(pr)), py = Math.sign(ay - this.nodeY(pr));
-        if (corner(a, [px, py], [dx, dy], 0.5 + s * len * 2)) return out;
+        if (corner(a, [px, py], [dx, dy], 0.5 + s * len * 2, offPrev, offCur)) return out;
       }
-      out.x = lerp(ax, bx, s) + nx * OFF;
-      out.y = lerp(ay, by, s) + ny * OFF;
+      out.x = lerp(ax, bx, s) + nx * offCur;
+      out.y = lerp(ay, by, s) + ny * offCur;
       out.a = Math.atan2(dy, dx);
       return out;
     }
@@ -418,17 +429,17 @@
       const edges = [];
       for (let n = 0; n < w.n; n++) {
         const e = w.eE[n];
-        if (e) edges.push(n, n + 1, e & 3, e >> 2);
+        if (e) edges.push(n, n + 1, e & 3, e >> 2, w.eEw[n]);
         const s = w.eS[n];
-        if (s) edges.push(n, n + w.cols, s & 3, s >> 2);
+        if (s) edges.push(n, n + w.cols, s & 3, s >> 2, w.eSw[n]);
       }
       const strokeEdges = (width, color, filter) => {
         ctx.lineWidth = width;
         ctx.strokeStyle = color;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        for (let k = 0; k < edges.length; k += 4) {
-          if (!filter(edges[k], edges[k + 1], edges[k + 2])) continue;
+        for (let k = 0; k < edges.length; k += 5) {
+          if (!filter(edges[k], edges[k + 1], edges[k + 2], edges[k + 4])) continue;
           ctx.moveTo(this.nodeX(edges[k]), this.nodeY(edges[k]));
           ctx.lineTo(this.nodeX(edges[k + 1]), this.nodeY(edges[k + 1]));
         }
@@ -459,30 +470,55 @@
         strokeEdges(27, 'rgba(40,70,90,0.18)', isBridge);
         strokeEdges(24, 'rgba(255,255,255,0.97)', isBridge);
         ctx.lineCap = 'round';
-        strokeEdges(R_NARROW + 8, THEME.sidewalk, (a, b, t) => t === 1);
+        strokeEdges(R_WIDE + 8, THEME.sidewalk, (a, b, t, wd) => t === 1 && wd);
+        strokeEdges(R_NARROW + 8, THEME.sidewalk, (a, b, t, wd) => t === 1 && !wd);
         strokeEdges(R_HW + 8, THEME.hwEdge, (a, b, t) => t === 2);
-        strokeEdges(R_NARROW + 2.6, '#ffffff', (a, b, t) => t === 1);
+        strokeEdges(R_WIDE + 2.6, '#ffffff', (a, b, t, wd) => t === 1 && wd);
+        strokeEdges(R_NARROW + 2.6, '#ffffff', (a, b, t, wd) => t === 1 && !wd);
         strokeEdges(R_HW + 2.6, '#ffffff', (a, b, t) => t === 2);
-        strokeEdges(R_NARROW, THEME.road, (a, b, t) => t === 1);
+        strokeEdges(R_WIDE, THEME.road, (a, b, t, wd) => t === 1 && wd);
+        strokeEdges(R_NARROW, THEME.road, (a, b, t, wd) => t === 1 && !wd);
         strokeEdges(R_HW, THEME.hw, (a, b, t) => t === 2);
 
-        // centre lines: white dashes, stopped short of junctions (where the zebra crossings go) and buildings
+        // centre lines, stopped short of junctions (where the zebra crossings go) and buildings:
+        // two-lane road = white dashes; four-lane road = solid yellow centre line + white dashes between the lanes
+        const trimmed = (k, fn) => {
+          const a = edges[k], b = edges[k + 1];
+          const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
+          const ta = w.isJunction(a) ? 17 : w.bld[a] ? 15 : 0, tb = w.isJunction(b) ? 17 : w.bld[b] ? 15 : 0;
+          const ux = Math.sign(bx - ax), uy = Math.sign(by - ay), len = C - ta - tb;
+          if (len < 7) return;
+          fn(ax + ux * ta, ay + uy * ta, bx - ux * tb, by - uy * tb, -uy, ux);
+        };
         ctx.lineCap = 'butt';
         ctx.lineWidth = 1.2;
         ctx.strokeStyle = 'rgba(255,255,255,0.92)';
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
-        for (let k = 0; k < edges.length; k += 4) {
-          const a = edges[k], b = edges[k + 1];
-          const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
-          const ta = w.isJunction(a) ? 17 : w.bld[a] ? 15 : 0, tb = w.isJunction(b) ? 17 : w.bld[b] ? 15 : 0;
-          const ux = Math.sign(bx - ax), uy = Math.sign(by - ay), len = C - ta - tb;
-          if (len < 7) continue;
-          ctx.moveTo(ax + ux * ta, ay + uy * ta);
-          ctx.lineTo(bx - ux * tb, by - uy * tb);
+        for (let k = 0; k < edges.length; k += 5) {
+          if (edges[k + 4]) continue;
+          trimmed(k, (x0, y0, x1, y1) => { ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); });
+        }
+        ctx.stroke();
+        ctx.beginPath(); // lane lines of four-lane roads (between the two lanes of each direction)
+        for (let k = 0; k < edges.length; k += 5) {
+          if (!edges[k + 4]) continue;
+          trimmed(k, (x0, y0, x1, y1, nx, ny) => {
+            for (const o of [-8, 8]) { ctx.moveTo(x0 + nx * o, y0 + ny * o); ctx.lineTo(x1 + nx * o, y1 + ny * o); }
+          });
         }
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#f0c52f';
+        ctx.beginPath(); // solid yellow centre line (no overtaking)
+        for (let k = 0; k < edges.length; k += 5) {
+          if (!edges[k + 4]) continue;
+          trimmed(k, (x0, y0, x1, y1, nx, ny) => {
+            for (const o of [-0.9, 0.9]) { ctx.moveTo(x0 + nx * o, y0 + ny * o); ctx.lineTo(x1 + nx * o, y1 + ny * o); }
+          });
+        }
+        ctx.stroke();
 
         // junction details: zebra crossings + stop lines on every approach, "止まれ" signs at plain junctions
         const detail = v.scale >= 0.4;
@@ -497,10 +533,12 @@
             ctx.translate(x + MM.DX[d] * 13.5, y + MM.DY[d] * 13.5);
             ctx.rotate(Math.atan2(MM.DY[d], MM.DX[d]));
             ctx.fillStyle = 'rgba(255,255,255,0.93)';
-            for (let i = 0; i < 5; i++) ctx.fillRect(-2.6, -7.05 + i * 3.1, 5.2, 1.7); // zebra bars run along the road
-            ctx.fillRect(4.1, -7.4, 1.8, 6.6); // stop line, on the lane that drives towards the junction
+            const wd = w.isWideDir(n, d); // four-lane approach: longer crossing, wider stop line
+            const bars = wd ? 9 : 5, pitch = wd ? 3.3 : 3.1;
+            for (let i = 0; i < bars; i++) ctx.fillRect(-2.6, -((bars - 1) * pitch + 1.7) / 2 + i * pitch, 5.2, 1.7); // zebra bars run along the road
+            ctx.fillRect(4.1, wd ? -15.6 : -7.4, 1.8, wd ? 14.8 : 6.6); // stop line, on the lanes that drive towards the junction
             if (detail && plain) {
-              ctx.translate(4.6, -13.5); // 止まれ: red inverted triangle on the roadside
+              ctx.translate(4.6, wd ? -21.5 : -13.5); // 止まれ: red inverted triangle on the roadside
               ctx.fillStyle = '#ffffff';
               ctx.beginPath(); ctx.moveTo(-3.6, -3); ctx.lineTo(3.6, -3); ctx.lineTo(0, 3.6); ctx.closePath(); ctx.fill();
               ctx.fillStyle = '#e53a35';
@@ -512,7 +550,7 @@
 
         // expressway entrances / exits carry a green sign board
         if (detail) {
-          for (let k = 0; k < edges.length; k += 4) {
+          for (let k = 0; k < edges.length; k += 5) {
             if (edges[k + 2] !== 2) continue;
             for (const [n, m] of [[edges[k], edges[k + 1]], [edges[k + 1], edges[k]]]) {
               let other = false;
@@ -534,7 +572,7 @@
         if (detail) {
           for (let n = 0; n < w.n; n++) {
             const dg = w.deg(n);
-            if (dg !== 2 || w.bld[n] || (((n * 2654435761) >>> 0) % 6) !== 0) continue;
+            if (dg !== 2 || w.bld[n] || w.hasWide(n) || (((n * 2654435761) >>> 0) % 6) !== 0) continue;
             const hor = w.edge(n, 1) && w.edge(n, 3), ver = w.edge(n, 0) && w.edge(n, 2);
             if (!hor && !ver) continue;
             const side = (((n * 40503) >>> 0) & 1) ? 1 : -1;

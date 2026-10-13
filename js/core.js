@@ -10,6 +10,8 @@
     ACCEL: 6, // cells / s^2
     HW_MULT: 2.1, // highway speed multiplier
     TUN_MULT: 1.5, // tunnel speed multiplier
+    WIDE_GAP: 1.18, // following-gap multiplier on a four-lane road: 2 lanes / 1.18 = about 1.7x the flow of a two-lane road
+    WIDE_HEADWAY: 0.28, // seconds between cars entering a junction that touches a four-lane road while another car is still inside
     TUNNEL_MIN: 2, // shortest / longest tunnel, in cells between its two portals
     TUNNEL_MAX: 6,
     GAP: 0.3, // minimum following gap (in cells)
@@ -59,6 +61,8 @@
       // oneWay 0 both directions, 1 only toward the higher node index, 2 only toward the lower.
       this.eE = new Uint8Array(n); // edge  n -> n+1
       this.eS = new Uint8Array(n); // edge  n -> n+cols
+      this.eEw = new Uint8Array(n); // 1 = the road edge n -> n+1 has four lanes (two per direction)
+      this.eSw = new Uint8Array(n); // 1 = the road edge n -> n+cols has four lanes
       this.tun = new Map(); // tunnels: lane id (node*4+dir) -> {to, len}; stored for both ends
       this.feat = new Uint8Array(n); // 0 none, 1 traffic light, 2 roundabout, 3 overpass
       this.ringId = new Int16Array(n); // big roundabout the node is part of (id+1), else 0
@@ -145,17 +149,35 @@
       return this.rawE(a, this.dirOf(a, b));
     }
 
-    /** Set (v > 0) or clear (v = 0) the surface edge between adjacent a and b; oneWay = only a -> b. */
-    setEdge(a, b, v, oneWay) {
+    /** Set (v > 0) or clear (v = 0) the surface edge between adjacent a and b; oneWay = only a -> b; wide = four lanes. */
+    setEdge(a, b, v, oneWay, wide) {
       const d = this.dirOf(a, b);
       let raw = v;
       if (v && oneWay) raw |= ((d === 1 || d === 2) ? 1 : 2) << 2;
+      const wf = v && wide ? 1 : 0;
       switch (d) {
-        case 1: this.eE[a] = raw; break;
-        case 2: this.eS[a] = raw; break;
-        case 3: this.eE[b] = raw; break;
-        case 0: this.eS[b] = raw; break;
+        case 1: this.eE[a] = raw; this.eEw[a] = wf; break;
+        case 2: this.eS[a] = raw; this.eSw[a] = wf; break;
+        case 3: this.eE[b] = raw; this.eEw[b] = wf; break;
+        case 0: this.eS[b] = raw; this.eSw[b] = wf; break;
       }
+    }
+
+    /** True if the surface edge leaving n in direction d is a four-lane road. */
+    isWideDir(n, d) {
+      switch (d) {
+        case 1: return this.eEw[n] === 1;
+        case 2: return this.eSw[n] === 1;
+        case 3: return n % this.cols > 0 && this.eEw[n - 1] === 1;
+        default: return n >= this.cols && this.eSw[n - this.cols] === 1;
+      }
+    }
+
+    isWideBetween(a, b) { return this.adjacent(a, b) && this.isWideDir(a, this.dirOf(a, b)); }
+
+    /** True if any four-lane road touches n (such a junction is bigger and lets two cars through at once). */
+    hasWide(n) {
+      return this.isWideDir(n, 0) || this.isWideDir(n, 1) || this.isWideDir(n, 2) || this.isWideDir(n, 3);
     }
 
     /** Number of road / tunnel edges touching n (either direction). */
