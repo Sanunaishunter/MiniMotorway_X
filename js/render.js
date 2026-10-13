@@ -50,6 +50,10 @@
       this.preview = null; // {a, b, reason} while dragging a tunnel
       this.scn = null; // decorative scenery (trees, flowing water, clouds)
       this.police = null; // decorative traffic police cars
+      this.timeMode = 'cycle'; // 'day' | 'night' | 'cycle': the sky is always bright, always dark, or follows the day / night cycle
+      this.dark = 0; // current darkness 0..1 (eased toward the target)
+      this._lastNow = 0;
+      this.sprites = {};
       this.cam = { zoom: 1, cx: 0, cy: 0 }; // camera: zoom >= 1 (1 = whole map fits), cx/cy = world point at the screen centre
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
@@ -343,6 +347,147 @@
         ctx.globalCompositeOperation = 'source-over';
       }
       ctx.restore();
+    }
+
+    // ------------------------------------------------------------ night
+    /** Target darkness for the current time mode: the cycle is a long day, dusk, a long night and dawn. */
+    darkTarget() {
+      if (this.timeMode === 'day') return 0;
+      if (this.timeMode === 'night') return 1;
+      const p = ((this.game.time / CFG.DAY_SECONDS) % 1 + 1) % 1;
+      const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+      return ss(0.34, 0.5, p) - ss(0.86, 1.0, p);
+    }
+
+    /** Small cached light sprites (soft glow in a colour, headlight cone). */
+    glowSprite(rgb) {
+      const key = 'g' + rgb;
+      let c = this.sprites[key];
+      if (!c) {
+        c = document.createElement('canvas');
+        c.width = c.height = 64;
+        const x = c.getContext('2d');
+        const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gr.addColorStop(0, `rgba(${rgb},1)`);
+        gr.addColorStop(0.35, `rgba(${rgb},0.45)`);
+        gr.addColorStop(1, `rgba(${rgb},0)`);
+        x.fillStyle = gr;
+        x.fillRect(0, 0, 64, 64);
+        this.sprites[key] = c;
+      }
+      return c;
+    }
+
+    coneSprite() {
+      let c = this.sprites.cone;
+      if (!c) {
+        c = document.createElement('canvas');
+        c.width = 96; c.height = 64;
+        const x = c.getContext('2d');
+        const gr = x.createLinearGradient(0, 0, 96, 0);
+        gr.addColorStop(0, 'rgba(255,246,210,0.85)');
+        gr.addColorStop(1, 'rgba(255,246,210,0)');
+        x.fillStyle = gr;
+        x.beginPath(); x.moveTo(0, 26); x.lineTo(96, 0); x.lineTo(96, 64); x.lineTo(0, 38); x.closePath(); x.fill();
+        this.sprites.cone = c;
+      }
+      return c;
+    }
+
+    glow(ctx, rgb, x, y, r, a) {
+      ctx.globalAlpha = Math.min(1, a);
+      ctx.drawImage(this.glowSprite(rgb), x - r, y - r, r * 2, r * 2);
+    }
+
+    /** Headlights, tail lights, street lamps, lit windows: drawn over a night tint, in world coordinates. */
+    drawNight(ctx, now) {
+      const v = this.view, g = this.game, w = g.world, k = this.dark;
+      // tint everything (screen space)
+      ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = `rgb(${Math.round(255 - 140 * k)},${Math.round(255 - 125 * k)},${Math.round(255 - 70 * k)})`;
+      ctx.fillRect(0, 0, v.w, v.h);
+      // lights (world space, additive)
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.save();
+      ctx.translate(v.ox, v.oy);
+      ctx.scale(v.scale, v.scale);
+      const cone = this.coneSprite();
+      const carLights = (x, y, a, alpha) => {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(a);
+        ctx.globalAlpha = 0.6 * k * alpha;
+        ctx.drawImage(cone, 5, -13, 40, 26);
+        ctx.globalAlpha = k * alpha;
+        ctx.fillStyle = '#fff6d0';
+        ctx.fillRect(5.2, -3.4, 1.7, 1.6); ctx.fillRect(5.2, 1.8, 1.7, 1.6);
+        ctx.fillStyle = '#ff3b30';
+        ctx.fillRect(-6.4, -3.4, 1.4, 1.5); ctx.fillRect(-6.4, 1.9, 1.4, 1.5);
+        ctx.restore();
+      };
+      for (const car of g.cars) {
+        if (car.dead || this.carLevel(car) === 2) continue;
+        const p = this.carPose(car);
+        carLights(p.x, p.y, p.a, 1);
+      }
+      for (const cop of this.police.cops) carLights(cop.x, cop.y, cop.ang, Math.max(0, cop.alpha));
+      // street lamps (街灯) along the roads
+      for (let n = 0; n < w.n; n++) {
+        if (w.bld[n] || w.deg(n) < 2 || (((n * 2246822519) >>> 0) % 4) !== 0) continue;
+        const hor = w.edge(n, 1) || w.edge(n, 3);
+        const side = (((n * 40503) >>> 0) & 1) ? 1 : -1;
+        const lx = this.nodeX(n) + (hor ? 0 : side * 16), ly = this.nodeY(n) + (hor ? side * 16 : 0);
+        if (lx * v.scale + v.ox < -60 || lx * v.scale + v.ox > v.w + 60 || ly * v.scale + v.oy < -60 || ly * v.scale + v.oy > v.h + 60) continue;
+        this.glow(ctx, '255,214,130', lx, ly, 34, 0.8 * k);
+        ctx.globalAlpha = k;
+        ctx.fillStyle = '#fff0b8';
+        ctx.beginPath(); ctx.arc(lx, ly, 2, 0, 6.2832); ctx.fill();
+      }
+      // traffic light lamps, tunnel mouths
+      for (let n = 0; n < w.n; n++) {
+        if (w.feat[n] !== 1) continue;
+        const L = g.lights.get(n);
+        for (let d = 0; d < 4; d++) {
+          if (!w.edge(n, d)) continue;
+          const green = L && !L.pending && L.green === (d & 1);
+          this.glow(ctx, green ? '88,224,138' : '255,90,90', this.nodeX(n) + MM.DX[d] * 12.5, this.nodeY(n) + MM.DY[d] * 12.5, 11, 0.8 * k);
+        }
+      }
+      for (const [key] of w.tun) {
+        const a = key >> 2, d = key & 3;
+        this.glow(ctx, '255,174,58', this.nodeX(a) + MM.DX[d] * 9, this.nodeY(a) + MM.DY[d] * 9, 18, 0.9 * k);
+      }
+      // buildings: windows glow warm, destinations glow in their colour
+      for (const b of g.buildings) {
+        const x = this.nodeX(b.node), y = this.nodeY(b.node);
+        const born = Math.min(1, Math.max(0, (g.time - b.born) / 0.5));
+        const col = MM.COLORS[b.color].main;
+        const rgb = [1, 3, 5].map((i) => parseInt(col.slice(i, i + 2), 16)).join(',');
+        if (b.kind === 'house') { // the colour must stay readable: coloured glow with a warm window
+          this.glow(ctx, rgb, x, y, 30, 0.7 * k * born);
+          ctx.globalAlpha = 0.45 * k * born;
+          ctx.fillStyle = '#ffd98a';
+          rr(ctx, -6 + x, -6 + y, 12, 12, 3); ctx.fill();
+        } else {
+          this.glow(ctx, rgb, x, y, 46, 0.85 * k * born);
+          ctx.globalAlpha = 0.28 * k * born;
+          ctx.fillStyle = '#ffffff';
+          rr(ctx, -9 + x, -9 + y, 18, 18, 5); ctx.fill();
+        }
+      }
+      // police lights flash brighter in the dark
+      for (const cop of this.police.cops) {
+        const step = Math.floor(now / 85 + cop.id * 3) % 8;
+        const red = step === 0 || step === 2, blue = step === 4 || step === 6;
+        if (!red && !blue) continue;
+        const ca = Math.cos(cop.ang), sa = Math.sin(cop.ang);
+        const off = red ? -1.6 : 1.6;
+        this.glow(ctx, red ? '255,40,40' : '60,130,255', cop.x - sa * off, cop.y + ca * off, 40, 1.0 * k * Math.max(0, cop.alpha));
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
     }
 
     // ------------------------------------------------------------ buildings
@@ -817,6 +962,12 @@
       ctx.restore();
       ctx.restore();
       this.scn.drawSky(ctx, v, clock); // cloud shadows, clouds, drifting petals
+      const dt = Math.min(0.25, Math.max(0, (now - this._lastNow) / 1000));
+      this._lastNow = now;
+      const target = this.darkTarget();
+      this.dark += (target - this.dark) * Math.min(1, dt * 2.5);
+      if (Math.abs(target - this.dark) < 0.002) this.dark = target;
+      if (this.dark > 0.01) this.drawNight(ctx, now);
     }
 
     addEvents(events) {

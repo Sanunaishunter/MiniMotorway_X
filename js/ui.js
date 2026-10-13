@@ -10,6 +10,7 @@
   const DAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
+  const TIME_KEY = 'mmx_time_v1';
   const C = MM.CFG.CELL;
 
   const store = {
@@ -513,6 +514,22 @@
     refreshSoundIcon();
     sfx.click();
   };
+  // time of day: 永晝 / 永夜 / 晝夜交替
+  const TIME_MODES = ['cycle', 'day', 'night'];
+  const TIME_NAMES = { cycle: '晝夜交替', day: '永晝', night: '永夜' };
+  function setTimeMode(m, announce) {
+    renderer.timeMode = m;
+    store.set(TIME_KEY, m);
+    $('icoDay').style.display = m === 'day' ? '' : 'none';
+    $('icoNight').style.display = m === 'night' ? '' : 'none';
+    $('icoCycle').style.display = m === 'cycle' ? '' : 'none';
+    $('btnTime').title = '晝夜:' + TIME_NAMES[m];
+    if (announce) toast('模式:' + TIME_NAMES[m]);
+  }
+  function nextTimeMode() { setTimeMode(TIME_MODES[(TIME_MODES.indexOf(renderer.timeMode) + 1) % 3], true); sfx.click(); }
+  $('btnTime').onclick = nextTimeMode;
+  { const saved = store.get(TIME_KEY); setTimeMode(TIME_MODES.includes(saved) ? saved : 'cycle', false); }
+
   // fullscreen (+ landscape lock where the browser allows it)
   const fsEl = document.documentElement;
   const canFs = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
@@ -536,6 +553,7 @@
     const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
+    else if (e.key === 'n' || e.key === 'N') nextTimeMode();
     else if (e.key === '0') renderer.resetCamera();
     else if (e.key.startsWith('Arrow') && renderer.isZoomed()) {
       e.preventDefault();

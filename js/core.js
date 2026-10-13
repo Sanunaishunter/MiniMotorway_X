@@ -22,6 +22,7 @@
     PIN_LIMIT: 7, // pins at a destination before the overflow timer starts
     OVERFLOW_TIME: 16, // seconds the overflow meter needs to fill
     MAYOR_SECONDS: 300, // 市長的命令: how long (game seconds, 5 minutes) the city is invincible once the roads have been rebuilt
+    DAY_SECONDS: 150, // length of one day / night cycle in the 晝夜交替 mode (game seconds, two weeks)
     LIGHT_PERIOD: 3.6,
     LIGHT_MIN_GREEN: 1.2,
     MAX_COLORS: 6,
