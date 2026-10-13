@@ -3,9 +3,12 @@
 const path = require('path');
 require(path.join(__dirname, '../js/core.js'));
 require(path.join(__dirname, '../js/sim.js'));
+require(path.join(__dirname, '../js/police.js'));
 const MM = globalThis.MM;
 
 let failures = 0;
+// a collapse is where the old game ended: now it offers the mayor's order first
+const ended = (g) => g.state === 'collapse' || g.state === 'over';
 function check(cond, msg) {
   if (!cond) { failures++; console.error('  FAIL: ' + msg); } else console.log('  ok:   ' + msg);
 }
@@ -82,7 +85,7 @@ console.log('2. basic delivery with auto-wired roads');
 {
   const g = new MM.Game({ seed: 7 });
   let err = null;
-  for (let t = 0; t < 25 * 360 && g.state !== 'over'; t++) {
+  for (let t = 0; t < 25 * 360 && !ended(g); t++) {
     if (g.state === 'upgrade') g.chooseUpgrade(0);
     if (t % 25 === 0) autoConnect(g);
     g.update(0.04);
@@ -97,7 +100,7 @@ console.log('3. unconnected houses eventually cause game over');
 {
   const g = new MM.Game({ seed: 3 });
   for (let t = 0; t < 60 * 60 * 5 && g.state === 'running'; t++) g.update(0.04);
-  check(g.state === 'over', 'game over without roads');
+  check(g.state === 'collapse', 'traffic collapse without roads (offers the mayor\'s order)');
 }
 
 console.log('4. random road editing stress (no crashes, invariants hold)');
@@ -106,7 +109,7 @@ console.log('4. random road editing stress (no crashes, invariants hold)');
   g.inv.light = 99; g.inv.round = 99; g.inv.hw = 99; g.inv.bridge = 99; g.inv.ovp = 99; g.inv.tun = 99; g.inv.big = 99; g.inv.wide = 99;
   const rnd = MM.mulberry32(5);
   let err = null;
-  for (let t = 0; t < 60 * 20 && g.state !== 'over'; t++) {
+  for (let t = 0; t < 60 * 20 && !ended(g); t++) {
     if (g.state === 'upgrade') g.chooseUpgrade(0);
     if (t % 20 === 0) autoConnect(g);
     const n = Math.floor(rnd() * g.world.n);
@@ -181,7 +184,7 @@ console.log('6. no gridlock / towing in the first 8 minutes (regression for junc
   for (let seed = 1; seed <= 10; seed++) {
     const g = new MM.Game({ seed });
     const rnd = MM.mulberry32(seed);
-    for (let t = 0; t < 25 * 60 * 8 && g.state !== 'over'; t++) {
+    for (let t = 0; t < 25 * 60 * 8 && !ended(g); t++) {
       if (g.state === 'upgrade') g.chooseUpgrade(Math.floor(rnd() * 3));
       if (t % 25 === 0) {
         autoConnect(g);
@@ -658,6 +661,131 @@ console.log('14. a lock holder is never boxed in on a four-lane road (regression
   check(crossDone.length >= 20, 'cross traffic keeps flowing through J1 (' + crossDone.length + ' cars)');
 }
 MM.CFG.WEEK_SECONDS = WEEK;
+
+console.log("15. 市長的命令: collapse -> mayor (time frozen, editable) -> invincible window -> recovery or final failure");
+{
+  const wireAll = (g) => {
+    for (const h of g.houses) {
+      if (h._wired) continue;
+      const d = g.dests.find((x) => x.color === h.color);
+      if (d && connect(g, h.node, d.node)) h._wired = true;
+    }
+  };
+  const collapseGame = (seed) => {
+    const g = new MM.Game({ seed });
+    for (let t = 0; t < 60 * 60 * 5 && g.state === 'running'; t++) g.update(0.04);
+    return g;
+  };
+
+  // a) the order is only available at a collapse; it freezes time but allows road editing
+  {
+    const g = new MM.Game({ seed: 3 });
+    check(!g.mayorOrder() && !g.finishMayor(), 'the order cannot be used while the game is running');
+    const g2 = collapseGame(3);
+    check(g2.state === 'collapse' && g2.over && g2.over.final === false, 'a collapse waits for the player\'s decision');
+    check(!g2.addEdge(g2.houses[0].node, g2.houses[0].node + 1, 1).ok, 'no editing while the collapse prompt is open');
+    const t0 = g2.time;
+    check(g2.mayorOrder() && g2.state === 'mayor', 'the mayor\'s order starts');
+    g2.update(30);
+    check(g2.time === t0, 'time is frozen during the mayor\'s order');
+    const h = g2.houses[0], d = g2.dests.find((x) => x.color === h.color);
+    const edgesBefore = g2.world.eE.reduce((a, b) => a + (b ? 1 : 0), 0) + g2.world.eS.reduce((a, b) => a + (b ? 1 : 0), 0);
+    check(connect(g2, h.node, d.node), 'roads can be built during the order');
+    const edgesAfter = g2.world.eE.reduce((a, b) => a + (b ? 1 : 0), 0) + g2.world.eS.reduce((a, b) => a + (b ? 1 : 0), 0);
+    check(edgesAfter > edgesBefore, 'the new road exists');
+    check(g2.finishMayor() && g2.state === 'running', 'finishing the order resumes the game');
+    check(Math.abs(g2.shieldLeft() - MM.CFG.MAYOR_SECONDS) < 1e-6 && MM.CFG.MAYOR_SECONDS === 300, 'the shield lasts five minutes');
+  }
+
+  // b) fixing the roads inside the window: the choked destination drains, and a window that ends with nothing choked is survived
+  {
+    const g = collapseGame(3);
+    const choked = g.over.dest;
+    g.mayorOrder();
+    wireAll(g);
+    g.finishMayor();
+    let err = null, maxO = 0;
+    for (let t = 0; t < 25 * 60 && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+      if (!err && t % 50 === 0) err = sanity(g);
+    }
+    check(!err, 'invariants hold (' + err + ')');
+    check(g.state === 'running' && choked.overflow < 0.5, 'the repaired destination drains its overflow (' + choked.overflow.toFixed(2) + ')');
+    // (the test bot cannot wire everything on this map, so clear the demand and shorten the window to judge the end of it)
+    for (const d of g.dests) { d.pins = 0; d.inbound = 0; d.overflow = 0; }
+    for (const h of g.houses) h.queue.length = 0;
+    g.invincibleUntil = g.time + 1;
+    g.events.length = 0;
+    for (let t = 0; t < 25 * 3 && g.state === 'running'; t++) g.update(0.04);
+    check(g.state === 'running' && !g.mayorActive && g.shieldLeft() === 0, 'a window that ends with nothing choked is survived');
+    check(g.events.some((e) => e.type === 'mayorend'), 'the end of the window is announced');
+  }
+
+  // c) doing nothing: invincible for five minutes, then the final failure
+  {
+    const g = collapseGame(5);
+    g.mayorOrder();
+    g.finishMayor();
+    let sawOver = -1;
+    const t0 = g.time;
+    for (let t = 0; t < 25 * (MM.CFG.MAYOR_SECONDS + 30) && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+      if (g.state === 'collapse') { sawOver = -2; break; }
+    }
+    check(sawOver !== -2, 'no new collapse prompt appears while shielded');
+    check(g.state === 'over' && g.over && g.over.final === true, 'unrepaired city fails for good after the window');
+    check(Math.abs((g.time - t0) - MM.CFG.MAYOR_SECONDS) < 0.5, 'the final failure comes after five minutes (' + (g.time - t0).toFixed(1) + 's)');
+  }
+
+  // d) after recovering, a later collapse offers the order again
+  {
+    const g = collapseGame(3);
+    g.mayorOrder(); wireAll(g); g.finishMayor();
+    check(g.mayorUses === 1, 'mayorUses counts the orders');
+  }
+}
+
+console.log('16. decorative police patrol cars stay on the roads and never touch the simulation');
+{
+  const mk = () => {
+    const g = new MM.Game({ seed: 8 });
+    for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
+    return g;
+  };
+  const run = (withPolice) => {
+    const g = mk();
+    const pol = new MM.Police(g.world, 1);
+    let bad = 0, maxCops = 0, moved = 0, lastPos = new Map();
+    for (let t = 0; t < 25 * 240; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      if (ended(g)) break;
+      g.update(0.04);
+      if (withPolice) {
+        pol.update(0.04);
+        maxCops = Math.max(maxCops, pol.cops.length);
+        for (const c of pol.cops) {
+          const e = g.world.edge(c.a, c.d);
+          if (!c.dying && e !== 1 && e !== 2) bad++;
+          const p = lastPos.get(c.id);
+          if (p && (p[0] !== c.x || p[1] !== c.y)) moved++;
+          lastPos.set(c.id, [c.x, c.y]);
+        }
+      }
+    }
+    return { g, bad, maxCops, moved };
+  };
+  const a = run(true), b = run(false);
+  check(a.maxCops >= 1 && a.maxCops <= 3, 'between one and three patrol cars appear (' + a.maxCops + ')');
+  check(a.bad === 0, 'a patrol car is always on an existing surface road');
+  check(a.moved > 100, 'patrol cars actually drive around');
+  check(a.g.score === b.g.score && a.g.cars.length === b.g.cars.length && a.g.time === b.g.time, 'the simulation is identical with and without police (' + a.g.score + ')');
+  const empty = new MM.Game({ seed: 9 });
+  const p2 = new MM.Police(empty.world, 2);
+  for (let t = 0; t < 25 * 60; t++) p2.update(0.04);
+  check(p2.cops.length === 0, 'no patrol cars without roads');
+}
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

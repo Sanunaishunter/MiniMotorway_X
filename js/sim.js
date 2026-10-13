@@ -44,7 +44,10 @@
       this.week = 1;
       this.score = 0;
       this.tick = 0;
-      this.state = 'running'; // running | upgrade | over
+      this.state = 'running'; // running | upgrade | collapse | mayor | over
+      this.invincibleUntil = 0; // game time until which the mayor's order protects the city from collapsing
+      this.mayorActive = false; // true from the moment the mayor's order is finished until its window has been judged
+      this.mayorUses = 0;
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
@@ -164,7 +167,7 @@
     addEdge(a, b, kind) {
       const w = this.world;
       kind = kind || 1;
-      if (this.state !== 'running') return { ok: false, reason: 'state' };
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
       if (!w.adjacent(a, b)) return { ok: false, reason: 'adj' };
       if (w.bld[a] && w.bld[b]) return { ok: false, reason: 'bld' };
       if (w.island[a] || w.island[b]) return { ok: false, reason: 'island' };
@@ -206,7 +209,7 @@
 
     removeEdge(a, b) {
       const w = this.world;
-      if (this.state !== 'running') return { ok: false };
+      if (!this.canEdit()) return { ok: false };
       const cur = w.rawBetween(a, b) & 3;
       if (!cur) return { ok: false };
       if (w.ringId[a] && w.ringId[a] === w.ringId[b]) return { ok: false, reason: 'ring' }; // part of a big roundabout
@@ -222,7 +225,7 @@
 
     placeFeature(n, kind) {
       const w = this.world;
-      if (this.state !== 'running') return { ok: false, reason: 'state' };
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
       if (n < 0 || w.bld[n] || w.feat[n] || w.ringId[n] || w.island[n]) return { ok: false, reason: 'occupied' };
       if (kind === 'ovp') {
         if (w.deg(n) < 4 || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return { ok: false, reason: 'need4' };
@@ -276,7 +279,7 @@
 
     placeBig(c) {
       const w = this.world;
-      if (this.state !== 'running') return { ok: false, reason: 'state' };
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
       const bad = this.checkBig(c);
       if (bad) return { ok: false, reason: bad };
       if (this.inv.big <= 0) return { ok: false, reason: 'none' };
@@ -309,7 +312,7 @@
     removeBig(id) {
       const w = this.world;
       const b = this.bigs.get(id);
-      if (!b || this.state !== 'running') return false;
+      if (!b || !this.canEdit()) return false;
       for (let i = 0; i < 8; i++) {
         w.setEdge(b.nodes[i], b.nodes[(i + 1) % 8], 0);
         w.ringId[b.nodes[i]] = 0;
@@ -346,7 +349,7 @@
 
     addTunnel(a, b) {
       const w = this.world;
-      if (this.state !== 'running') return { ok: false, reason: 'state' };
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
       const bad = this.checkTunnel(a, b);
       if (bad) return { ok: false, reason: bad };
       const d = w.dirOf(a, b), od = (d + 2) & 3;
@@ -363,7 +366,7 @@
     removeTunnel(a, d) {
       const w = this.world;
       const t = w.tun.get(a * 4 + d);
-      if (!t || this.state !== 'running') return false;
+      if (!t || !this.canEdit()) return false;
       w.tun.delete(a * 4 + d);
       w.tun.delete(t.to * 4 + ((d + 2) & 3));
       this.inv.tun++;
@@ -822,10 +825,21 @@
       }
 
       // overflow
+      const shielded = this.time < this.invincibleUntil;
+      // the mayor's order has run out: if some destination is still choked, the city is lost for good
+      if (this.mayorActive && !shielded) {
+        this.mayorActive = false;
+        const d = this.dests.find((x) => x.overflow >= 1);
+        if (d) { this.gameOver(d, true); return; }
+        this.events.push({ type: 'mayorend' });
+      }
       for (const d of this.dests) {
         if (d.pins - d.inbound >= CFG.PIN_LIMIT) d.overflow += dt / CFG.OVERFLOW_TIME;
         else d.overflow = Math.max(0, d.overflow - dt / 7);
-        if (d.overflow >= 1) { this.gameOver(d); return; }
+        if (d.overflow >= 1) {
+          d.overflow = 1;
+          if (!shielded) { this.collapse(d); return; }
+        }
       }
 
       // end of week
@@ -864,9 +878,43 @@
       return true;
     }
 
-    gameOver(dest) {
+    /** Editing roads is allowed while running and during the mayor's order (time is frozen then). */
+    canEdit() { return this.state === 'running' || this.state === 'mayor'; }
+
+    /** The roads are choked: the player may use the mayor's order or give up. */
+    collapse(dest) {
+      this.state = 'collapse';
+      this.over = { dest, final: false };
+      this.events.push({ type: 'gameover', node: dest.node });
+    }
+
+    /** 市長的命令: freeze the clock so the roads can be rebuilt. */
+    mayorOrder() {
+      if (this.state !== 'collapse') return false;
+      this.state = 'mayor';
+      this.mayorUses++;
+      this.over = null;
+      this.events.push({ type: 'mayor' });
+      return true;
+    }
+
+    /** The rebuild is done: time runs again and the city cannot collapse for CFG.MAYOR_SECONDS. */
+    finishMayor() {
+      if (this.state !== 'mayor') return false;
+      this.state = 'running';
+      this.invincibleUntil = this.time + CFG.MAYOR_SECONDS;
+      this.mayorActive = true;
+      this.events.push({ type: 'mayorgo' });
+      return true;
+    }
+
+    /** Seconds of invincibility left (0 when not shielded). */
+    shieldLeft() { return this.mayorActive ? Math.max(0, this.invincibleUntil - this.time) : 0; }
+
+    /** Give up (or fail the mayor's window): the game is over. `final` = the mayor's second chance was not enough. */
+    gameOver(dest, final) {
       this.state = 'over';
-      this.over = { dest };
+      this.over = { dest, final: !!final };
       this.events.push({ type: 'gameover', node: dest.node });
     }
 

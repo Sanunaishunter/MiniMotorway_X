@@ -49,6 +49,7 @@
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
       this.scn = null; // decorative scenery (trees, flowing water, clouds)
+      this.police = null; // decorative traffic police cars
       this.cam = { zoom: 1, cx: 0, cy: 0 }; // camera: zoom >= 1 (1 = whole map fits), cx/cy = world point at the screen centre
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
@@ -57,6 +58,7 @@
     setGame(game) {
       this.game = game;
       this.scn = new MM.Scenery(game);
+      this.police = new MM.Police(game.world, (Math.random() * 1e9) | 0); // decorative patrol cars (not part of the simulation)
       this.fx = [];
       this.statics = null;
       this.resetCamera();
@@ -304,6 +306,41 @@
           ctx.fillStyle = '#fff3b8'; ctx.strokeStyle = '#e0a21c'; ctx.lineWidth = 0.7;
           rr(ctx, -2.2, -1.3, 2.6, 2.6, 0.8); ctx.fill(); ctx.stroke();
         }
+      }
+      ctx.restore();
+    }
+
+    /** Japanese patrol car (パトカー): white body, black hood and trunk, a roof light bar flashing red then blue. Purely decorative. */
+    drawPolice(ctx, cop, now) {
+      const step = Math.floor(now / 85 + cop.id * 3) % 8; // R . R . B . B .
+      const red = step === 0 || step === 2, blue = step === 4 || step === 6;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, cop.alpha));
+      ctx.translate(cop.x, cop.y);
+      ctx.rotate(cop.ang);
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      rr(ctx, -6.2, -2.8, 12.8, 7.2, 2.2); ctx.fill();
+      ctx.fillStyle = '#fbfbfb'; ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1;
+      rr(ctx, -6.4, -3.6, 12.8, 7.2, 2.2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2b303a'; // black hood and trunk
+      rr(ctx, 3.6, -3.1, 2.5, 6.2, 1); ctx.fill();
+      rr(ctx, -6, -3.1, 2.4, 6.2, 1); ctx.fill();
+      ctx.fillStyle = 'rgba(150,200,235,0.9)'; // windscreen
+      rr(ctx, 1.1, -2.5, 2.1, 5, 0.8); ctx.fill();
+      // light bar: red on the left side of the car, blue on the right
+      ctx.fillStyle = red ? '#ff2a2a' : '#7a2a2e';
+      rr(ctx, -2.1, -3.1, 3.2, 3.1, 0.8); ctx.fill();
+      ctx.fillStyle = blue ? '#2f7bff' : '#2a3a6e';
+      rr(ctx, -2.1, 0, 3.2, 3.1, 0.8); ctx.fill();
+      if (red || blue) { // glow
+        ctx.globalCompositeOperation = 'lighter';
+        const gy = red ? -1.6 : 1.6, col = red ? '255,40,40' : '60,130,255';
+        const gr = ctx.createRadialGradient(-0.5, gy, 0, -0.5, gy, 15);
+        gr.addColorStop(0, `rgba(${col},0.75)`);
+        gr.addColorStop(1, `rgba(${col},0)`);
+        ctx.fillStyle = gr;
+        ctx.beginPath(); ctx.arc(-0.5, gy, 15, 0, 6.2832); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
       }
       ctx.restore();
     }
@@ -651,6 +688,7 @@
         if (lv === 0) this.drawCar(ctx, car, false);
         else if (lv === 1) elevated.push(car);
       }
+      for (const cop of this.police.cops) this.drawPolice(ctx, cop, now);
       for (let n = 0; n < w.n; n++) {
         if (w.feat[n] !== 3) continue;
         const x = this.nodeX(n), y = this.nodeY(n);
@@ -697,7 +735,7 @@
       for (const b of g.buildings) this.drawBuilding(ctx, b, g.time);
 
       // ---- placement hints
-      if ((this.tool === 'light' || this.tool === 'round' || this.tool === 'ovp') && g.state === 'running') {
+      if ((this.tool === 'light' || this.tool === 'round' || this.tool === 'ovp') && g.canEdit()) {
         const pulse = 0.5 + 0.5 * Math.sin(now / 220);
         ctx.lineWidth = 2.2;
         ctx.strokeStyle = `rgba(47,58,75,${0.35 + 0.35 * pulse})`;
@@ -712,7 +750,7 @@
         ctx.setLineDash([]);
       }
       // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
-      if (this.tool === 'big' && this.hover >= 0 && g.state === 'running') {
+      if (this.tool === 'big' && this.hover >= 0 && g.canEdit()) {
         const bad = g.checkBig(this.hover);
         const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
         ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : 'rgba(53,196,140,0.18)';
@@ -725,7 +763,7 @@
         ctx.beginPath(); ctx.arc(x, y, 17, 0, 6.2832); ctx.stroke();
       }
       // tunnel being dragged out
-      if (this.preview && g.state === 'running') {
+      if (this.preview && g.canEdit()) {
         const pv = this.preview;
         const ok = !pv.reason;
         const col = ok ? '#1e9a64' : '#e03c46';
@@ -742,7 +780,7 @@
         ctx.textAlign = 'center';
         ctx.fillText(String(len), (this.nodeX(pv.a) + this.nodeX(pv.b)) / 2, (this.nodeY(pv.a) + this.nodeY(pv.b)) / 2 - 12);
       }
-      if (this.hover >= 0 && g.state === 'running') {
+      if (this.hover >= 0 && g.canEdit()) {
         const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
         ctx.fillStyle = this.tool === 'erase' ? 'rgba(235,60,70,0.22)' : 'rgba(47,58,75,0.14)';
         ctx.beginPath();

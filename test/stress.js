@@ -76,7 +76,7 @@ for (let seed = 1; seed <= seeds; seed++) {
   const rnd = MM.mulberry32(seed * 7);
   const lastPos = new Map();
   let maxStuck = 0, err = null, tows = 0;
-  for (let t = 0; t < 25 * 60 * minutes && g.state !== 'over'; t++) {
+  for (let t = 0; t < 25 * 60 * minutes && g.state !== 'collapse' && g.state !== 'over'; t++) {
     if (g.state === 'upgrade') { g.chooseUpgrade(Math.floor(rnd() * 3)); }
     if (t % 25 === 0) { wire(g); useInventory(g, rnd); }
     try { g.update(0.04); } catch (e) { err = e; break; }

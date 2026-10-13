@@ -152,6 +152,28 @@ html, body {
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ---------- mayor's order banner (inside the map area, bottom centre) ---------- */
+#mayorBar {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  max-width: calc(100% - 16px);
+  padding: 6px 8px 6px 14px;
+  border-radius: 99px;
+  background: rgba(47, 58, 75, 0.92);
+  color: #fff;
+  font-size: 14px; font-weight: 700;
+  box-shadow: 0 4px 14px rgba(30, 45, 35, 0.3);
+  white-space: nowrap;
+}
+#mayorBar.hidden { display: none; }
+#mayorBar.shield { padding: 6px 14px; background: rgba(46, 125, 90, 0.92); pointer-events: none; }
+#mayorBar .btn { margin: 0; padding: 7px 16px; font-size: 14px; border-radius: 99px; background: #ffd24d; color: #2f3a4b; box-shadow: none; }
+#mayorBar.shield .btn { display: none; }
+#mayorBar .time { font-variant-numeric: tabular-nums; }
+
 /* ---------- modal ---------- */
 #modal {
   position: absolute; inset: 0;
@@ -254,6 +276,8 @@ html, body {
   .chip svg { width: 22px; height: 22px; }
 
   #toast { top: 8px; }
+  #mayorBar { bottom: 4px; font-size: 12.5px; padding: 3px 4px 3px 12px; }
+  #mayorBar .btn { padding: 5px 12px; font-size: 12.5px; }
   #modal { padding: 8px; }
   .card { padding: 12px 18px 12px; border-radius: 20px; }
   .card h1 { font-size: 24px; }

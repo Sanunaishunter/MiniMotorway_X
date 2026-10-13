@@ -74,6 +74,7 @@
       week() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.28, 'triangle', 0.05, i * 0.09)); },
       over() { [392, 330, 262, 196].forEach((f, i) => tone(f, 0.35, 'sawtooth', 0.04, i * 0.16)); },
       deny() { tone(150, 0.14, 'square', 0.03); },
+      mayor() { [660, 880, 660, 880].forEach((f, i) => tone(f, 0.16, 'triangle', 0.045, i * 0.14)); },
       click() { tone(500, 0.05, 'triangle', 0.04); },
     };
   })();
@@ -112,6 +113,7 @@
     ui.game = game || new MM.Game({ cols: 34, rows: 22 });
     ui.overShown = false;
     ui.overTimer = 0;
+    mayorSig = '';
     renderer.setGame(ui.game);
     renderer.tool = ui.tool;
     stroke = null;
@@ -156,7 +158,7 @@
       ${colorDots(6)}
       <ol class="tips">
         <li><b>拖曳</b>畫出道路,把房子連到<b>同顏色</b>的目的地。</li>
-        <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿即<b>遊戲結束</b>。</li>
+        <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿就<b>交通癱瘓</b>——這時可以下<b>市長的命令</b>:時間暫停讓你改路,之後有 5 分鐘無敵時間。</li>
         <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路、四線道、高架、隧道。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
         <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
@@ -205,18 +207,73 @@
     });
   }
 
-  function showOver(g) {
-    sfx.over();
+  function recordBest(g) {
     const newBest = g.score > ui.best;
     if (newBest) { ui.best = g.score; store.set(BEST_KEY, String(ui.best)); }
+    return newBest;
+  }
+
+  /** The roads are choked: still "交通癱瘓了!", but the player can call the mayor's order instead of giving up. */
+  function showCollapse(g) {
+    sfx.over();
     showModal(`
       <h2>交通癱瘓了!</h2>
       <p>${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
+      <div class="big">${g.score}</div>
+      <p>輛車成功送達 · 撐到第 ${g.week} 週</p>
+      <p><b>市長的命令</b>:時間暫停,讓你重新規劃道路;改好之後有 <b>5 分鐘</b>的無敵時間。</p>
+      <button class="btn" id="mMayor">市長的命令</button><button class="btn alt" id="mAgain">放棄,再玩一次</button>`);
+    $('mMayor').onclick = () => {
+      g.mayorOrder();
+      sfx.mayor();
+      hideModal();
+      ui.mode = 'play';
+      ui.overShown = false;
+      ui.overTimer = 0;
+      toast('時間暫停中:改好路線後,按下方的按鈕');
+    };
+    $('mAgain').onclick = () => { recordBest(g); restart(); };
+  }
+
+  function showOver(g) {
+    sfx.over();
+    const newBest = recordBest(g);
+    const final = g.over && g.over.final;
+    showModal(`
+      <h2>${final ? '塞爆乃汽車常事,請市長重新再來' : '交通癱瘓了!'}</h2>
+      <p>${final ? '無敵時間結束了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
       <div class="big">${g.score}</div>
       <p>輛車成功送達 · 撐到第 ${g.week} 週${newBest ? ' · <b style="color:#e8590c">新紀錄!</b>' : ` · 最高 ${ui.best}`}</p>
       <button class="btn" id="mAgain">再玩一次</button>`);
     $('mAgain').onclick = () => { restart(); };
   }
+
+  /** Banner in the map area: "finished?" button while the clock is frozen, then the invincibility countdown. */
+  const mayorBar = $('mayorBar');
+  let mayorSig = '';
+  function updateMayorBar(g) {
+    let sig = '', text = '';
+    if (g.state === 'mayor') {
+      sig = 'mayor';
+      text = '市長的命令:時間暫停中,請重新規劃道路';
+    } else if (g.shieldLeft() > 0) {
+      const t = Math.ceil(g.shieldLeft());
+      sig = 'shield' + t;
+      text = `市長的命令 · 無敵 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    }
+    if (sig === mayorSig) return;
+    mayorSig = sig;
+    mayorBar.classList.toggle('hidden', !sig);
+    mayorBar.classList.toggle('shield', sig.startsWith('shield'));
+    $('mayorText').textContent = text;
+  }
+  $('mayorDone').onclick = () => {
+    const g = ui.game;
+    if (g.finishMayor()) {
+      sfx.place();
+      toast('無敵 5 分鐘!趁現在把路網整理好');
+    }
+  };
 
   function restart() {
     hideModal();
@@ -317,7 +374,7 @@
   canvas.addEventListener('pointerdown', (e) => {
     sfx.unlock();
     const g = ui.game;
-    if (ui.mode !== 'play' || g.state !== 'running') return;
+    if (ui.mode !== 'play' || !g.canEdit()) return;
     canvas.setPointerCapture(e.pointerId);
     const [px, py] = localPoint(e);
     pointers.set(e.pointerId, { x: px, y: py });
@@ -378,7 +435,7 @@
     }
     const n = renderer.pickNode(px, py);
     renderer.hover = e.pointerType === 'touch' && !stroke ? -1 : n;
-    if (!stroke || e.pointerId !== stroke.id || ui.mode !== 'play' || g.state !== 'running') return;
+    if (!stroke || e.pointerId !== stroke.id || ui.mode !== 'play' || !g.canEdit()) return;
     if (stroke.tool === 'tun') { updateTunnelPreview(g, n); return; }
     if (n < 0 || n === stroke.last) return;
     if (stroke.last < 0) { stroke.last = n; stroke.start = n; return; }
@@ -411,7 +468,7 @@
     if (pointers.size < 2) gesture = null;
     if (panning && e.pointerId === panning.id) panning = null;
     if (stroke && e.pointerId === stroke.id) {
-      if (stroke.tool === 'tun' && ui.game.state === 'running' && ui.mode === 'play') {
+      if (stroke.tool === 'tun' && ui.game.canEdit() && ui.mode === 'play') {
         if (stroke.target >= 0) {
           const r = ui.game.addTunnel(stroke.start, stroke.target);
           if (r.ok) sfx.place(); else denyFor(r.reason);
@@ -438,7 +495,7 @@
   // ---------------------------------------------------------------- buttons / keys
   function togglePause() {
     if (ui.mode === 'play') showPause();
-    else if (ui.mode === 'pause' && ui.game.state === 'running') resume();
+    else if (ui.mode === 'pause' && ui.game.canEdit()) resume();
   }
   $('btnPause').onclick = () => { sfx.unlock(); sfx.click(); togglePause(); };
   $('btnSpeed').onclick = () => {
@@ -471,7 +528,7 @@
   };
 
   $('btnRestart').onclick = () => {
-    if (ui.game.state === 'over' || ui.game.score < 5 || window.confirm('確定要重新開始嗎?')) restart();
+    if (ui.game.state === 'over' || ui.game.state === 'collapse' || ui.game.score < 5 || window.confirm('確定要重新開始嗎?')) restart();
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
@@ -549,6 +606,7 @@
       if (e.type === 'deliver') sfx.deliver(e.color);
       else if (e.type === 'spawn' && g.time > 1) sfx.spawn();
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
+      else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');
     }
   }
 
@@ -559,14 +617,21 @@
     last = now;
     const g = ui.game;
     if (g) {
-      if (ui.mode === 'play' && g.state === 'running') g.update(dt * ui.speed);
+      if (ui.mode === 'play' && g.state === 'running') {
+        g.update(dt * ui.speed);
+        renderer.police.update(dt * ui.speed);
+      }
       handleEvents(g);
       if (ui.mode === 'play' && g.state === 'upgrade') showUpgrade(g, ui.pendingWeek);
-      if (g.state === 'over' && !ui.overShown) {
+      if ((g.state === 'over' || g.state === 'collapse') && !ui.overShown) {
         ui.overTimer += dt;
-        if (ui.overTimer > 1.1) { ui.overShown = true; ui.mode = 'pause'; showOver(g); }
+        if (ui.overTimer > 1.1) {
+          ui.overShown = true; ui.mode = 'pause';
+          if (g.state === 'collapse') showCollapse(g); else showOver(g);
+        }
       }
       updateHud(g);
+      updateMayorBar(g);
       renderer.render(now);
     }
     requestAnimationFrame(frame);
