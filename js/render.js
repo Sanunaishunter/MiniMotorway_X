@@ -39,7 +39,6 @@
       this.ctx = canvas.getContext('2d');
       this.game = null;
       this.view = { scale: 1, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
-      this.insets = { top: 70, bottom: 96, side: 12 };
       this.fx = [];
       this.hover = -1;
       this.tool = 'road';
@@ -61,26 +60,28 @@
       this.layout();
     }
 
-    /** Pick a grid that fills the screen at a comfortable zoom (smaller maps on small screens). */
+    /** Pick a grid that fills the whole screen at a comfortable zoom (smaller maps on small screens). */
     suggestGrid() {
       const v = this.view;
-      const aw = Math.max(240, v.w - this.insets.side * 2);
-      const ah = Math.max(240, v.h - this.insets.top - this.insets.bottom);
+      const aw = Math.max(240, v.w), ah = Math.max(200, v.h);
       const s = Math.max(0.55, Math.sqrt((aw * ah) / (760 * C * C)));
-      const cols = Math.max(16, Math.min(46, Math.floor(aw / (C * s))));
-      const rows = Math.max(12, Math.min(34, Math.floor(ah / (C * s))));
+      const cols = Math.max(16, Math.min(60, Math.floor(aw / (C * s))));
+      const rows = Math.max(10, Math.min(40, Math.floor(ah / (C * s))));
       return { cols, rows };
+    }
+
+    /** Scale / offset that fit a cols x rows grid into the screen (the map is full-screen; leftover is plain land). */
+    viewFor(cols, rows) {
+      const v = this.view;
+      const scale = Math.max(0.2, Math.min(v.w / (cols * C), v.h / (rows * C)));
+      return { scale, ox: (v.w - cols * C * scale) / 2, oy: (v.h - rows * C * scale) / 2 };
     }
 
     layout() {
       const g = this.game, v = this.view;
       if (!g) return;
-      const bw = g.cols * C, bh = g.rows * C;
-      const aw = v.w - this.insets.side * 2;
-      const ah = v.h - this.insets.top - this.insets.bottom;
-      v.scale = Math.max(0.2, Math.min(aw / bw, ah / bh));
-      v.ox = (v.w - bw * v.scale) / 2;
-      v.oy = this.insets.top + (ah - bh * v.scale) / 2;
+      const f = this.viewFor(g.cols, g.rows);
+      v.scale = f.scale; v.ox = f.ox; v.oy = f.oy;
       this.statics = null;
     }
 
@@ -96,30 +97,18 @@
       return r * g.cols + c;
     }
 
-    // ------------------------------------------------------------ static layer (board, water, lattice)
+    // ------------------------------------------------------------ static layer (land, water, lattice) — full screen
     buildStatics() {
       const g = this.game, v = this.view, w = g.world;
-      const pad = 40;
-      const bw = g.cols * C, bh = g.rows * C;
       const cv = document.createElement('canvas');
-      const sc = v.scale * v.dpr;
-      cv.width = Math.ceil((bw + pad * 2) * sc);
-      cv.height = Math.ceil((bh + pad * 2) * sc);
+      cv.width = Math.round(v.w * v.dpr);
+      cv.height = Math.round(v.h * v.dpr);
       const ctx = cv.getContext('2d');
-      ctx.scale(sc, sc);
-      ctx.translate(pad, pad);
-      // shadow + board
-      ctx.save();
-      ctx.shadowColor = 'rgba(40,50,40,0.22)';
-      ctx.shadowBlur = 26;
-      ctx.shadowOffsetY = 8;
+      ctx.scale(v.dpr, v.dpr);
       ctx.fillStyle = THEME.board;
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.fill();
-      ctx.restore();
-      ctx.save();
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.clip();
+      ctx.fillRect(0, 0, v.w, v.h);
+      ctx.translate(v.ox, v.oy);
+      ctx.scale(v.scale, v.scale);
       // lattice dots
       ctx.fillStyle = THEME.dot;
       for (let n = 0; n < w.n; n++) {
@@ -128,7 +117,9 @@
         ctx.arc(this.nodeX(n), this.nodeY(n), 1.7, 0, 6.2832);
         ctx.fill();
       }
-      // water: rounded-square cells fused together (shore pass, then deep pass)
+      // water: rounded-square cells fused together (shore pass, then deep pass); water touching the
+      // edge of the grid is extended past it so it runs off-screen instead of stopping at the grid.
+      const EXT = Math.max(v.w, v.h) / v.scale;
       const pass = (rr, color) => {
         const h = C / 2 - C * 0.3; // half size of the cell core (same for both passes)
         ctx.fillStyle = color;
@@ -139,10 +130,13 @@
         for (let n = 0; n < w.n; n++) {
           if (!w.water[n]) continue;
           const x = this.nodeX(n), y = this.nodeY(n);
-          ctx.rect(x - h, y - h, 2 * h, 2 * h);
+          const c = n % g.cols, r = (n / g.cols) | 0;
+          const x0 = c === 0 ? x - h - EXT : x - h, x1 = c === g.cols - 1 ? x + h + EXT : x + h;
+          const y0 = r === 0 ? y - h - EXT : y - h, y1 = r === g.rows - 1 ? y + h + EXT : y + h;
+          ctx.rect(x0, y0, x1 - x0, y1 - y0);
           const e = w.nb(n, 1), s = w.nb(n, 2);
-          if (e >= 0 && w.water[e]) ctx.rect(x - h, y - h, C + 2 * h, 2 * h);
-          if (s >= 0 && w.water[s]) ctx.rect(x - h, y - h, 2 * h, C + 2 * h);
+          if (e >= 0 && w.water[e]) ctx.rect(x - h, y0, C + 2 * h, y1 - y0);
+          if (s >= 0 && w.water[s]) ctx.rect(x0, y - h, x1 - x0, C + 2 * h);
           if (e >= 0 && s >= 0 && w.water[e] && w.water[s] && w.water[s + 1]) ctx.rect(x + h, y + h, C - 2 * h, C - 2 * h);
         }
         ctx.fill();
@@ -150,8 +144,7 @@
       };
       pass(C * 0.3 + 3.5, THEME.shore);
       pass(C * 0.3, THEME.water);
-      ctx.restore();
-      this.statics = { cv, pad, sc };
+      this.statics = { cv };
     }
 
     // ------------------------------------------------------------ cars
@@ -316,16 +309,13 @@
       if (!g) return;
       if (!this.statics) this.buildStatics();
       const st = this.statics;
-      ctx.drawImage(st.cv, v.ox - st.pad * v.scale, v.oy - st.pad * v.scale, st.cv.width / st.sc * v.scale, st.cv.height / st.sc * v.scale);
+      ctx.drawImage(st.cv, 0, 0, v.w, v.h);
 
       ctx.save();
       ctx.translate(v.ox, v.oy);
       ctx.scale(v.scale, v.scale);
       const w = g.world;
-      const bw = g.cols * C, bh = g.rows * C;
       ctx.save();
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.clip();
 
       // ---- roads
       const edges = [];
@@ -445,7 +435,7 @@
         }
         ctx.globalAlpha = 1;
       }
-      ctx.restore(); // clip
+      ctx.restore();
       ctx.restore();
     }
 

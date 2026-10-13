@@ -18,6 +18,7 @@
       opts = opts || {};
       this.cols = opts.cols || 34;
       this.rows = opts.rows || 22;
+      this.blockFn = opts.blockFn || null; // optional (node) => true to keep a node free of new buildings (e.g. under on-screen controls)
       this.seed = opts.seed != null ? opts.seed : (Math.random() * 2147483647) | 0;
       this.rand = MM.mulberry32(this.seed);
       this.world = new MM.World(this.cols, this.rows, this.rand);
@@ -73,6 +74,7 @@
     spotOK(n, mainOnly) {
       const w = this.world;
       if (w.water[n] || w.bld[n] || w.deg(n) > 0 || w.feat[n]) return false;
+      if (this.blockFn && this.blockFn(n)) return false;
       if (mainOnly && w.comp[n] !== w.mainComp) return false;
       if (w.compSize[w.comp[n]] < 8) return false;
       const c = w.col(n), r = w.row(n);

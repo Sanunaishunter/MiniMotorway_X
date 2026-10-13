@@ -9,6 +9,9 @@
   const DAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
+  const ALPHA_KEY = 'mmx_alpha_v1';
+  const ALPHAS = [0.25, 0.55, 0.85]; // translucent -> fairly solid
+  const C = MM.CFG.CELL;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -89,22 +92,37 @@
   // ---------------------------------------------------------------- layout
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = window.innerWidth, h = window.innerHeight;
-    const hud = $('hud').getBoundingClientRect();
-    const tb = $('toolbar').getBoundingClientRect();
-    renderer.insets.top = hud.bottom + 10;
-    renderer.insets.bottom = h - tb.top + 10;
-    renderer.insets.side = w < 640 ? 8 : 16;
-    renderer.resize(w, h, dpr);
+    renderer.resize(window.innerWidth, window.innerHeight, dpr);
+    refreshBlockRects();
+  }
+
+  // Keep new buildings out from under the on-screen controls (they float over the map).
+  let blockRects = [];
+  function refreshBlockRects() {
+    blockRects = [];
+    for (const el of document.querySelectorAll('.score-pill, .week-pill, .hud-btns, #toolbar')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0) blockRects.push([r.left - 14, r.top - 14, r.right + 14, r.bottom + 14]);
+    }
+  }
+  function makeBlockFn(cols, rows) {
+    return (n) => {
+      const v = renderer.viewFor(cols, rows);
+      const x = v.ox + ((n % cols) + 0.5) * C * v.scale;
+      const y = v.oy + (((n / cols) | 0) + 0.5) * C * v.scale;
+      for (const r of blockRects) if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) return true;
+      return false;
+    };
   }
 
   // ---------------------------------------------------------------- game lifecycle
   function newGame() {
     resize();
     const grid = renderer.suggestGrid();
+    const blockFn = makeBlockFn(grid.cols, grid.rows);
     let game = null;
     for (let attempt = 0; attempt < 12 && !game; attempt++) {
-      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows }); } catch (e) { /* unlucky map, roll another */ }
+      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows, blockFn }); } catch (e) { /* unlucky map, roll another */ }
     }
     ui.game = game || new MM.Game({ cols: 34, rows: 22 });
     ui.overShown = false;
@@ -112,6 +130,7 @@
     renderer.setGame(ui.game);
     renderer.tool = ui.tool;
     stroke = null;
+    document.body.classList.remove('drawing');
   }
 
   // ---------------------------------------------------------------- modals
@@ -146,6 +165,7 @@
         <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿即<b>遊戲結束</b>。</li>
         <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
+        <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
       </ol>
       <button class="btn" id="mStart">開始遊戲</button>`);
     $('mStart').onclick = () => { sfx.unlock(); sfx.click(); hideModal(); ui.mode = 'play'; };
@@ -277,6 +297,7 @@
     const tool = e.button === 2 ? 'erase' : ui.tool;
     stroke = { tool, last: n, start: n, id: e.pointerId };
     if (n < 0) return;
+    if (tool !== 'light' && tool !== 'round') document.body.classList.add('drawing');
     if (tool === 'light' || tool === 'round') {
       const r = g.placeFeature(n, tool);
       if (r.ok) sfx.place();
@@ -310,6 +331,7 @@
 
   const endStroke = (e) => {
     if (stroke && e.pointerId === stroke.id) stroke = null;
+    document.body.classList.remove('drawing');
     if (e.pointerType === 'touch') renderer.hover = -1;
   };
   canvas.addEventListener('pointerup', endStroke);
@@ -337,6 +359,32 @@
     refreshSoundIcon();
     sfx.click();
   };
+  // translucent controls: cycle through three opacity levels
+  let alphaIdx = Math.max(0, Math.min(ALPHAS.length - 1, parseInt(store.get(ALPHA_KEY) || '1', 10) || 0));
+  function applyAlpha() { document.documentElement.style.setProperty('--ui-a', String(ALPHAS[alphaIdx])); }
+  applyAlpha();
+  $('btnAlpha').onclick = () => {
+    alphaIdx = (alphaIdx + 1) % ALPHAS.length;
+    store.set(ALPHA_KEY, String(alphaIdx));
+    applyAlpha();
+    toast('介面透明度:' + ['高(很透明)', '中', '低(較實)'][alphaIdx]);
+    sfx.click();
+  };
+
+  // fullscreen (+ landscape lock where the browser allows it)
+  const fsEl = document.documentElement;
+  const canFs = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
+  if (!canFs) $('btnFull').style.display = 'none';
+  $('btnFull').onclick = () => {
+    sfx.click();
+    const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (inFs) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+    const req = (fsEl.requestFullscreen || fsEl.webkitRequestFullscreen).call(fsEl);
+    Promise.resolve(req).then(() => {
+      try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* not supported */ }
+    }).catch(() => {});
+  };
+
   $('btnRestart').onclick = () => {
     if (ui.game.state === 'over' || ui.game.score < 5 || window.confirm('確定要重新開始嗎?')) restart();
   };
@@ -347,8 +395,27 @@
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && ui.mode === 'play') showPause(); });
-  window.addEventListener('resize', () => { resize(); });
-  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+  let resizeTimer = 0;
+  function onResize() {
+    resize();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resize();
+      // before the first move the map can still be re-rolled to fit the new orientation; mid-game it stays put
+      if (ui.mode === 'start') newGame();
+      else ui.game.blockFn = makeBlockFn(ui.game.cols, ui.game.rows);
+      hintOrientation();
+    }, 150);
+  }
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+
+  let hinted = false;
+  function hintOrientation() {
+    if (hinted || window.innerHeight <= window.innerWidth || window.innerWidth > 700) return;
+    hinted = true;
+    toast('橫放手機,地圖更大更好玩');
+  }
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
@@ -410,5 +477,6 @@
   refreshSoundIcon();
   newGame();
   showStart();
+  setTimeout(hintOrientation, 700);
   requestAnimationFrame(frame);
 })();
