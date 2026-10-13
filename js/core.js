@@ -9,6 +9,9 @@
     SPEED: 1.7, // cells per second on a normal road
     ACCEL: 6, // cells / s^2
     HW_MULT: 2.1, // highway speed multiplier
+    TUN_MULT: 1.5, // tunnel speed multiplier
+    TUNNEL_MIN: 2, // shortest / longest tunnel, in cells between its two portals
+    TUNNEL_MAX: 6,
     GAP: 0.3, // minimum following gap (in cells)
     STOP: 0.62, // stop line position before a controlled intersection
     RELEASE: 0.3, // a car frees the intersection lock once this far past the junction
@@ -52,9 +55,14 @@
       this.rand = rand;
       const n = this.n;
       this.water = new Uint8Array(n);
-      this.eE = new Uint8Array(n); // edge  n -> n+1     (0 none, 1 road, 2 highway)
+      // Surface road edges. Raw value = type | (oneWay << 2): type 0 none / 1 road / 2 highway;
+      // oneWay 0 both directions, 1 only toward the higher node index, 2 only toward the lower.
+      this.eE = new Uint8Array(n); // edge  n -> n+1
       this.eS = new Uint8Array(n); // edge  n -> n+cols
-      this.feat = new Uint8Array(n); // 0 none, 1 traffic light, 2 roundabout
+      this.tun = new Map(); // tunnels: lane id (node*4+dir) -> {to, len}; stored for both ends
+      this.feat = new Uint8Array(n); // 0 none, 1 traffic light, 2 roundabout, 3 overpass
+      this.ringId = new Int16Array(n); // big roundabout the node is part of (id+1), else 0
+      this.island = new Int16Array(n); // big roundabout whose centre island this is (id+1), else 0
       this.bld = new Array(n).fill(null);
       this.comp = new Int16Array(n);
       this.mainComp = 0;
@@ -65,7 +73,8 @@
     col(n) { return n % this.cols; }
     row(n) { return (n / this.cols) | 0; }
 
-    nb(n, d) {
+    /** Grid neighbour (ignores tunnels). */
+    nbGrid(n, d) {
       const c = n % this.cols;
       const r = (n / this.cols) | 0;
       switch (d) {
@@ -76,23 +85,29 @@
       }
     }
 
-    // direction from a to adjacent b (assumes they are adjacent)
+    /** Graph neighbour: the far portal when a tunnel leaves `n` in direction `d`, else the grid neighbour. */
+    nb(n, d) {
+      const t = this.tun.get(n * 4 + d);
+      return t ? t.to : this.nbGrid(n, d);
+    }
+
+    /** Direction from a to b when they share a row or column (any distance), else -1. */
     dirOf(a, b) {
-      const d = b - a;
-      if (d === 1) return 1;
-      if (d === -1) return 3;
-      if (d === this.cols) return 2;
-      if (d === -this.cols) return 0;
+      const ca = a % this.cols, cb = b % this.cols;
+      const ra = (a / this.cols) | 0, rb = (b / this.cols) | 0;
+      if (ra === rb && ca !== cb) return cb > ca ? 1 : 3;
+      if (ca === cb && ra !== rb) return rb > ra ? 2 : 0;
       return -1;
     }
 
     adjacent(a, b) {
       if (a === b || a < 0 || b < 0 || a >= this.n || b >= this.n) return false;
       const d = this.dirOf(a, b);
-      return d >= 0 && this.nb(a, d) === b;
+      return d >= 0 && this.nbGrid(a, d) === b;
     }
 
-    edge(n, d) {
+    /** Raw surface edge value at n in direction d, ignoring one-way restrictions. */
+    rawE(n, d) {
       switch (d) {
         case 1: return this.eE[n];
         case 2: return this.eS[n];
@@ -101,28 +116,58 @@
       }
     }
 
-    edgeBetween(a, b) {
-      const d = this.dirOf(a, b);
-      return d < 0 ? 0 : this.edge(a, d);
+    /** Type (1 road, 2 highway, 3 tunnel) of the edge a car can take leaving n in direction d, else 0. */
+    edge(n, d) {
+      if (this.tun.has(n * 4 + d)) return 3;
+      const raw = this.rawE(n, d);
+      if (!raw) return 0;
+      const ow = raw >> 2;
+      if (ow === 0) return raw & 3;
+      const forward = d === 1 || d === 2;
+      return (ow === 1) === forward ? raw & 3 : 0;
     }
 
-    setEdge(a, b, v) {
+    /** True if any road, tunnel or one-way edge touches n in direction d. */
+    incident(n, d) {
+      return this.tun.has(n * 4 + d) || this.rawE(n, d) > 0;
+    }
+
+    /** Traversable edge type from a to its graph neighbour b (a -> b), else 0. */
+    edgeBetween(a, b) {
       const d = this.dirOf(a, b);
+      if (d < 0 || this.nb(a, d) !== b) return 0;
+      return this.edge(a, d);
+    }
+
+    /** Raw surface edge value between two adjacent nodes (either direction). */
+    rawBetween(a, b) {
+      if (!this.adjacent(a, b)) return 0;
+      return this.rawE(a, this.dirOf(a, b));
+    }
+
+    /** Set (v > 0) or clear (v = 0) the surface edge between adjacent a and b; oneWay = only a -> b. */
+    setEdge(a, b, v, oneWay) {
+      const d = this.dirOf(a, b);
+      let raw = v;
+      if (v && oneWay) raw |= ((d === 1 || d === 2) ? 1 : 2) << 2;
       switch (d) {
-        case 1: this.eE[a] = v; break;
-        case 2: this.eS[a] = v; break;
-        case 3: this.eE[b] = v; break;
-        case 0: this.eS[b] = v; break;
+        case 1: this.eE[a] = raw; break;
+        case 2: this.eS[a] = raw; break;
+        case 3: this.eE[b] = raw; break;
+        case 0: this.eS[b] = raw; break;
       }
     }
 
+    /** Number of road / tunnel edges touching n (either direction). */
     deg(n) {
       let k = 0;
-      if (this.edge(n, 0)) k++;
-      if (this.edge(n, 1)) k++;
-      if (this.edge(n, 2)) k++;
-      if (this.edge(n, 3)) k++;
+      for (let d = 0; d < 4; d++) if (this.incident(n, d)) k++;
       return k;
+    }
+
+    /** A node where cars can turn between roads and have to take turns: 3+ edges, not a building, not an overpass. */
+    isJunction(n) {
+      return !this.bld[n] && this.feat[n] !== 3 && this.deg(n) >= 3;
     }
 
     isBridgeEdge(a, b) { return this.water[a] === 1 || this.water[b] === 1; }
@@ -191,7 +236,7 @@
           const u = stack.pop();
           size++;
           for (let d = 0; d < 4; d++) {
-            const v = this.nb(u, d);
+            const v = this.nbGrid(u, d);
             if (v >= 0 && !this.water[v] && this.comp[v] < 0) {
               this.comp[v] = id;
               stack.push(v);

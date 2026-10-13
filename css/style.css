@@ -105,6 +105,7 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 .tool:active { transform: scale(0.94); }
 .tool.active { background: rgba(255, 255, 255, 0.92); border-color: var(--ink); box-shadow: 0 3px 10px rgba(40, 55, 45, 0.18); }
 .tool.empty { opacity: 0.4; }
+.tool.locked { display: none; }
 .tool svg { width: 28px; height: 28px; fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .tool svg .stroke-thick { stroke-width: 6; }
 .tool svg .stroke-thick.g { stroke: #8e9bb0; }
@@ -253,7 +254,9 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
     bottom: auto;
     top: 50%;
     transform: translateY(-46%);
-    flex-direction: column;
+    flex-flow: column wrap;
+    max-height: calc(100vh - var(--safe-t) - var(--safe-b) - 56px); /* more tools than fit -> a second column */
+    align-content: flex-start;
     gap: 4px;
     padding: 5px;
     border-radius: 18px;

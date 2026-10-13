@@ -42,6 +42,7 @@
       this.fx = [];
       this.hover = -1;
       this.tool = 'road';
+      this.preview = null; // {a, b, reason} while dragging a tunnel
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
     }
@@ -150,6 +151,8 @@
     // ------------------------------------------------------------ cars
     carPose(car) {
       const p = car.path, i = car.i, s = car.s;
+      const len = this.game.lenOf(car.lane); // lane length in cells (tunnels are long)
+      const zone = 0.25 / len; // the corner blend covers 0.25 cell on each side of a node
       const a = p[i], b = p[i + 1];
       const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
       const dx = Math.sign(bx - ax), dy = Math.sign(by - ay);
@@ -174,12 +177,12 @@
         out.a = Math.atan2(ty, tx);
         return true;
       };
-      if (s > 0.75 && c !== undefined) {
+      if (s > 1 - zone && c !== undefined) {
         const cx = Math.sign(this.nodeX(c) - bx), cy = Math.sign(this.nodeY(c) - by);
-        if (corner(b, [dx, dy], [cx, cy], (s - 0.75) * 2)) return out;
-      } else if (s < 0.25 && pr !== undefined) {
+        if (corner(b, [dx, dy], [cx, cy], (s - (1 - zone)) * len * 2)) return out;
+      } else if (s < zone && pr !== undefined) {
         const px = Math.sign(ax - this.nodeX(pr)), py = Math.sign(ay - this.nodeY(pr));
-        if (corner(a, [px, py], [dx, dy], 0.5 + s * 2)) return out;
+        if (corner(a, [px, py], [dx, dy], 0.5 + s * len * 2)) return out;
       }
       out.x = lerp(ax, bx, s) + nx * OFF;
       out.y = lerp(ay, by, s) + ny * OFF;
@@ -187,14 +190,29 @@
       return out;
     }
 
-    drawCar(ctx, car) {
+    /** 0 = on the ground, 1 = on an overpass deck, 2 = hidden inside a tunnel. */
+    carLevel(car) {
+      const g = this.game, w = g.world;
+      const len = g.lenOf(car.lane);
+      const a = car.path[car.i], b = car.path[car.i + 1];
+      const cells = car.s * len; // distance travelled along the lane, in cells
+      if (len > 1 && cells > 0.35 && len - cells > 0.35) return 2;
+      if (((car.lane & 3) & 1) === 0) { // vertical lanes go over a crossing road
+        if (w.feat[b] === 3 && len - cells < 0.6) return 1;
+        if (w.feat[a] === 3 && cells < 0.6) return 1;
+      }
+      return 0;
+    }
+
+    drawCar(ctx, car, elevated) {
       const pose = this.carPose(car);
       const col = MM.COLORS[car.color];
       ctx.save();
-      ctx.translate(pose.x, pose.y);
+      ctx.translate(pose.x, pose.y - (elevated ? 3 : 0));
       ctx.rotate(pose.a);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      rr(ctx, -5.8, -2.8, 12.4, 7, 2.2);
+      if (elevated) ctx.scale(1.12, 1.12);
+      ctx.fillStyle = elevated ? 'rgba(20,30,50,0.28)' : 'rgba(0,0,0,0.18)';
+      rr(ctx, -5.8, elevated ? 0.4 : -2.8, 12.4, 7, 2.2);
       ctx.fill();
       ctx.fillStyle = col.main;
       ctx.strokeStyle = col.dark;
@@ -321,22 +339,39 @@
       const edges = [];
       for (let n = 0; n < w.n; n++) {
         const e = w.eE[n];
-        if (e) edges.push(n, n + 1, e);
+        if (e) edges.push(n, n + 1, e & 3, e >> 2);
         const s = w.eS[n];
-        if (s) edges.push(n, n + w.cols, s);
+        if (s) edges.push(n, n + w.cols, s & 3, s >> 2);
       }
       const strokeEdges = (width, color, filter) => {
         ctx.lineWidth = width;
         ctx.strokeStyle = color;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        for (let k = 0; k < edges.length; k += 3) {
+        for (let k = 0; k < edges.length; k += 4) {
           if (!filter(edges[k], edges[k + 1], edges[k + 2])) continue;
           ctx.moveTo(this.nodeX(edges[k]), this.nodeY(edges[k]));
           ctx.lineTo(this.nodeX(edges[k + 1]), this.nodeY(edges[k + 1]));
         }
         ctx.stroke();
       };
+      // tunnels run underneath: dashed line below the roads
+      if (w.tun.size) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = 'rgba(70,82,104,0.30)';
+        ctx.setLineDash([3, 8]);
+        ctx.beginPath();
+        for (const [key, t] of w.tun) {
+          const a = key >> 2;
+          if (a > t.to) continue;
+          ctx.moveTo(this.nodeX(a), this.nodeY(a));
+          ctx.lineTo(this.nodeX(t.to), this.nodeY(t.to));
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
       const isBridge = (a, b) => w.water[a] === 1 || w.water[b] === 1;
       if (edges.length) {
         ctx.lineCap = 'butt';
@@ -352,10 +387,34 @@
         ctx.setLineDash([]);
       }
 
+      // ---- big roundabouts: green island in the middle, arrows showing the (counter-clockwise) flow
+      for (const big of g.bigs.values()) {
+        const x = this.nodeX(big.center), y = this.nodeY(big.center);
+        // the whole 3x3 area inside the ring is a lawn island
+        ctx.fillStyle = '#a9d9b1';
+        rr(ctx, x - 30.5, y - 30.5, 61, 61, 15); ctx.fill();
+        ctx.fillStyle = '#8cc89d';
+        rr(ctx, x - 22, y - 22, 44, 44, 11); ctx.fill();
+        ctx.fillStyle = '#6fb383';
+        for (const [tx, ty, tr] of [[-9, -8, 6], [8, 5, 7], [-4, 11, 4.5], [11, -11, 4]]) { ctx.beginPath(); ctx.arc(x + tx, y + ty, tr, 0, 6.2832); ctx.fill(); }
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        for (let i = 0; i < 8; i++) {
+          const a = big.nodes[i], b = big.nodes[(i + 1) % 8];
+          const mx = (this.nodeX(a) + this.nodeX(b)) / 2, my = (this.nodeY(a) + this.nodeY(b)) / 2;
+          const dx = Math.sign(this.nodeX(b) - this.nodeX(a)), dy = Math.sign(this.nodeY(b) - this.nodeY(a));
+          ctx.beginPath();
+          ctx.moveTo(mx + dx * 4.5, my + dy * 4.5);
+          ctx.lineTo(mx - dx * 3 - dy * 3.5, my - dy * 3 + dx * 3.5);
+          ctx.lineTo(mx - dx * 3 + dy * 3.5, my - dy * 3 - dx * 3.5);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+
       // ---- features (roundabouts, traffic lights)
       for (let n = 0; n < w.n; n++) {
         const f = w.feat[n];
-        if (!f) continue;
+        if (!f || f === 3) continue;
         const x = this.nodeX(n), y = this.nodeY(n);
         if (f === 2) {
           ctx.fillStyle = THEME.roadEdge;
@@ -381,25 +440,103 @@
         }
       }
 
-      // ---- cars (under buildings so they appear to enter/leave them)
-      for (const car of g.cars) if (!car.dead) this.drawCar(ctx, car);
+      // ---- cars (under buildings so they appear to enter/leave them): ground level, then overpass decks, then
+      //      the cars driving on top of them; cars inside a tunnel are not drawn
+      const elevated = [];
+      for (const car of g.cars) {
+        if (car.dead) continue;
+        const lv = this.carLevel(car);
+        if (lv === 0) this.drawCar(ctx, car, false);
+        else if (lv === 1) elevated.push(car);
+      }
+      for (let n = 0; n < w.n; n++) {
+        if (w.feat[n] !== 3) continue;
+        const x = this.nodeX(n), y = this.nodeY(n);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = 'rgba(25,35,55,0.30)';
+        rr(ctx, -9, -24, 28, 64, 7); ctx.fill();
+        ctx.fillStyle = THEME.roadEdge;
+        rr(ctx, -14, -32, 28, 64, 7); ctx.fill();
+        ctx.fillStyle = '#c3cddd';
+        rr(ctx, -11.5, -32, 23, 64, 5); ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(-9.5, -28); ctx.lineTo(-9.5, 28); ctx.moveTo(9.5, -28); ctx.lineTo(9.5, 28); ctx.stroke();
+        ctx.strokeStyle = 'rgba(86,99,122,0.7)';
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(0, 28); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+      for (const car of elevated) this.drawCar(ctx, car, true);
+      // tunnel mouths
+      for (const [key, t] of w.tun) {
+        const a = key >> 2, d = key & 3;
+        const x = this.nodeX(a), y = this.nodeY(a);
+        ctx.fillStyle = THEME.roadEdge;
+        ctx.beginPath(); ctx.arc(x, y, 12.5, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#2f3643';
+        ctx.beginPath(); ctx.arc(x, y, 9.5, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        const dx = MM.DX[d], dy = MM.DY[d];
+        ctx.beginPath();
+        ctx.moveTo(x + dx * 5.5, y + dy * 5.5);
+        ctx.lineTo(x - dx * 2 - dy * 4, y - dy * 2 + dx * 4);
+        ctx.lineTo(x - dx * 2 + dy * 4, y - dy * 2 - dx * 4);
+        ctx.closePath();
+        ctx.fill();
+        void t;
+      }
 
       // ---- buildings
       for (const b of g.buildings) this.drawBuilding(ctx, b, g.time);
 
       // ---- placement hints
-      if ((this.tool === 'light' || this.tool === 'round') && g.state === 'running') {
+      if ((this.tool === 'light' || this.tool === 'round' || this.tool === 'ovp') && g.state === 'running') {
         const pulse = 0.5 + 0.5 * Math.sin(now / 220);
         ctx.lineWidth = 2.2;
         ctx.strokeStyle = `rgba(47,58,75,${0.35 + 0.35 * pulse})`;
         ctx.setLineDash([4, 4]);
+        const need = this.tool === 'ovp' ? 4 : 3;
         for (let n = 0; n < w.n; n++) {
-          if (w.bld[n] || w.feat[n] || w.deg(n) < 3) continue;
+          if (w.bld[n] || w.feat[n] || w.ringId[n] || w.deg(n) < need) continue;
           ctx.beginPath();
           ctx.arc(this.nodeX(n), this.nodeY(n), 17, 0, 6.2832);
           ctx.stroke();
         }
         ctx.setLineDash([]);
+      }
+      // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
+      if (this.tool === 'big' && this.hover >= 0 && g.state === 'running') {
+        const bad = g.checkBig(this.hover);
+        const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
+        ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : 'rgba(53,196,140,0.18)';
+        ctx.strokeStyle = bad ? 'rgba(235,60,70,0.7)' : 'rgba(30,150,100,0.8)';
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([6, 5]);
+        rr(ctx, x - 1.5 * C, y - 1.5 * C, 3 * C, 3 * C, 20);
+        ctx.fill(); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(x, y, 17, 0, 6.2832); ctx.stroke();
+      }
+      // tunnel being dragged out
+      if (this.preview && g.state === 'running') {
+        const pv = this.preview;
+        const ok = !pv.reason;
+        const col = ok ? '#1e9a64' : '#e03c46';
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([2, 9]);
+        ctx.beginPath(); ctx.moveTo(this.nodeX(pv.a), this.nodeY(pv.a)); ctx.lineTo(this.nodeX(pv.b), this.nodeY(pv.b)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col;
+        for (const n of [pv.a, pv.b]) { ctx.beginPath(); ctx.arc(this.nodeX(n), this.nodeY(n), 7, 0, 6.2832); ctx.fill(); }
+        const len = Math.abs(g.world.col(pv.a) - g.world.col(pv.b)) + Math.abs(g.world.row(pv.a) - g.world.row(pv.b));
+        ctx.font = 'bold 13px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(len), (this.nodeX(pv.a) + this.nodeX(pv.b)) / 2, (this.nodeY(pv.a) + this.nodeY(pv.b)) / 2 - 12);
       }
       if (this.hover >= 0 && g.state === 'running') {
         const x = this.nodeX(this.hover), y = this.nodeY(this.hover);

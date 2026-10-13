@@ -130,6 +130,10 @@
     renderer.setGame(ui.game);
     renderer.tool = ui.tool;
     stroke = null;
+    renderer.preview = null;
+    unlockedTools.clear();
+    hud.inv = '';
+    if (ui.tool !== 'road') setTool('road');
     document.body.classList.remove('drawing');
   }
 
@@ -146,6 +150,9 @@
     round: '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="9.5" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="3" fill="#9fd3a8"/></svg>',
     bridge: '<svg viewBox="0 0 32 32" fill="none" stroke="#2f3a4b" stroke-width="2.4" stroke-linecap="round"><rect x="0" y="22" width="32" height="8" fill="#b7dcec" stroke="none"/><path d="M3 20h26M7 20v-6M25 20v-6M7 14c4 0 5 4 9 4s5-4 9-4"/></svg>',
     hw: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#f4ab45" stroke-width="6"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#fff" stroke-width="1.4" stroke-dasharray="2.5 3"/></svg>',
+    ovp: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M3 21H29" stroke="#8e9bb0" stroke-width="6"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>',
+    tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
+    big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
   };
 
   function colorDots(n) {
@@ -241,8 +248,23 @@
     b.addEventListener('click', () => { sfx.unlock(); sfx.click(); setTool(b.dataset.tool); });
   });
 
+  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big'];
   let stroke = null;
   let lastDeny = 0;
+  const DENY_TEXT = {
+    need3: '要放在三岔以上的路口',
+    need4: '高架要放在十字路口(四個方向都有路)',
+    none: '已經用完了,下週再挑選升級',
+    occupied: '這裡不能放置',
+    edge: '離地圖邊緣太近了',
+    blocked: '大圓環需要 3×3 的空地(不能有建築、水面或設施)',
+    line: '入口和出口要在同一條直線上',
+    short: '隧道至少要 2 格長',
+    long: '隧道最長 6 格',
+    portal: '隧道的入口與出口不能在水面或建築上',
+    busy: '入口朝隧道的那一側不能已經有道路',
+  };
+  function denyFor(reason) { if (DENY_TEXT[reason]) deny(DENY_TEXT[reason]); }
   function deny(msg) {
     const now = performance.now();
     if (now - lastDeny < 900) return;
@@ -272,7 +294,9 @@
   function applyStep(g, cur, next) {
     const w = g.world;
     if (stroke.tool === 'erase') {
-      if (g.removeEdge(cur, next).ok) sfx.erase();
+      const r = g.removeEdge(cur, next);
+      if (r.ok) sfx.erase();
+      else if (r.reason === 'ring') deny('圓環的路段不能單獨拆除,請點中央綠地');
       return;
     }
     // a stroke never continues *through* a building: it can only start or end on one
@@ -283,6 +307,8 @@
     else if (r.reason === 'nobridge') deny('橋樑不足!下週的升級可以獲得更多');
     else if (r.reason === 'nohw') deny('高速公路數量不足');
     else if (r.reason === 'hw-water') deny('高速公路不能建在水上');
+    else if (r.reason === 'island') deny('圓環中央是綠地,不能在這裡鋪路');
+    else if (r.reason === 'tunnel') deny('隧道入口的這一側不能鋪路');
   }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -297,16 +323,24 @@
     const tool = e.button === 2 ? 'erase' : ui.tool;
     stroke = { tool, last: n, start: n, id: e.pointerId };
     if (n < 0) return;
-    if (tool !== 'light' && tool !== 'round') document.body.classList.add('drawing');
-    if (tool === 'light' || tool === 'round') {
+    if (!CLICK_TOOLS.includes(tool)) document.body.classList.add('drawing');
+    if (tool === 'light' || tool === 'round' || tool === 'ovp') {
       const r = g.placeFeature(n, tool);
       if (r.ok) sfx.place();
-      else if (r.reason === 'need3') deny('要放在三岔以上的路口');
-      else if (r.reason === 'none') deny('已經用完了,下週再挑選升級');
-      else if (r.reason === 'occupied') deny('這裡不能放置');
+      else denyFor(r.reason);
       stroke = null;
+    } else if (tool === 'big') {
+      const r = g.placeBig(n);
+      if (r.ok) sfx.place();
+      else denyFor(r.reason);
+      stroke = null;
+    } else if (tool === 'tun') {
+      stroke.target = -1;
+      renderer.preview = null;
     } else if (tool === 'erase') {
-      if (g.removeFeature(n)) { sfx.erase(); }
+      const w = g.world;
+      // a click removes a placed feature, the whole big roundabout (click its green island) or a tunnel (click a portal)
+      if (g.removeFeature(n) || (w.island[n] && g.removeBigAt(n)) || g.removeTunnelAt(n, true)) sfx.erase();
     }
   });
 
@@ -316,9 +350,10 @@
     const n = renderer.pickNode(px, py);
     renderer.hover = e.pointerType === 'touch' && !stroke ? -1 : n;
     if (!stroke || e.pointerId !== stroke.id || ui.mode !== 'play' || g.state !== 'running') return;
+    if (stroke.tool === 'tun') { updateTunnelPreview(g, n); return; }
     if (n < 0 || n === stroke.last) return;
     if (stroke.last < 0) { stroke.last = n; stroke.start = n; return; }
-    if (stroke.tool === 'light' || stroke.tool === 'round') return;
+    if (CLICK_TOOLS.includes(stroke.tool)) return;
     let cur = stroke.last;
     let guard = g.cols + g.rows + 4;
     while (cur !== n && guard-- > 0) {
@@ -329,8 +364,32 @@
     stroke.last = n;
   });
 
+  // tunnel: drag from the entrance along a row / column; the exit snaps to 2-6 cells away
+  function updateTunnelPreview(g, p) {
+    const a = stroke.start;
+    if (a < 0 || p < 0) return;
+    const w = g.world;
+    const dc = w.col(p) - w.col(a), dr = w.row(p) - w.row(a);
+    let b = -1;
+    if (Math.abs(dc) >= Math.abs(dr) && dc !== 0) b = a + Math.sign(dc) * Math.min(Math.abs(dc), MM.CFG.TUNNEL_MAX);
+    else if (dr !== 0) b = a + Math.sign(dr) * Math.min(Math.abs(dr), MM.CFG.TUNNEL_MAX) * w.cols;
+    stroke.target = b;
+    renderer.preview = b < 0 ? null : { a, b, reason: g.checkTunnel(a, b) };
+  }
+
   const endStroke = (e) => {
-    if (stroke && e.pointerId === stroke.id) stroke = null;
+    if (stroke && e.pointerId === stroke.id) {
+      if (stroke.tool === 'tun' && ui.game.state === 'running' && ui.mode === 'play') {
+        if (stroke.target >= 0) {
+          const r = ui.game.addTunnel(stroke.start, stroke.target);
+          if (r.ok) sfx.place(); else denyFor(r.reason);
+        } else if (stroke.start >= 0) {
+          deny('從入口拖曳到出口(同一直線,2–6 格)');
+        }
+      }
+      stroke = null;
+      renderer.preview = null;
+    }
     document.body.classList.remove('drawing');
     if (e.pointerType === 'touch') renderer.hover = -1;
   };
@@ -390,8 +449,9 @@
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'erase' };
-    if (map[e.key] && ui.mode === 'play') setTool(map[e.key]);
+    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'big', 6: 'ovp', 7: 'tun', 8: 'erase' };
+    const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
+    if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && ui.mode === 'play') showPause(); });
@@ -419,6 +479,8 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
+  const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'big', 'ovp', 'tun'];
+  const unlockedTools = new Set();
   function updateHud(g) {
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
@@ -428,16 +490,19 @@
     if (hud.day !== d) { hud.day = d; $('dayName').textContent = '週' + DAYS[d]; }
     const f = Math.round((g.weekTime / MM.CFG.WEEK_SECONDS) * 1000) / 10;
     if (hud.fill !== f) { hud.fill = f; $('weekFill').style.width = f + '%'; }
-    const sig = `${g.inv.hw}|${g.inv.light}|${g.inv.round}|${g.inv.bridge}`;
+    const sig = OPTIONAL_TOOLS.map((k) => g.inv[k]).join('|') + '|' + g.inv.bridge;
     if (sig !== hud.inv) {
       hud.inv = sig;
-      $('cntHw').textContent = g.inv.hw;
-      $('cntLight').textContent = g.inv.light;
-      $('cntRound').textContent = g.inv.round;
       $('cntBridge').textContent = g.inv.bridge;
-      document.querySelector('[data-tool="hw"]').classList.toggle('empty', g.inv.hw <= 0);
-      document.querySelector('[data-tool="light"]').classList.toggle('empty', g.inv.light <= 0);
-      document.querySelector('[data-tool="round"]').classList.toggle('empty', g.inv.round <= 0);
+      for (const k of OPTIONAL_TOOLS) {
+        const btn = document.querySelector(`[data-tool="${k}"]`);
+        if (g.inv[k] > 0) unlockedTools.add(k); // a tool shows up the first time you own one
+        btn.classList.toggle('locked', !unlockedTools.has(k));
+        btn.classList.toggle('empty', g.inv[k] <= 0);
+        const badge = btn.querySelector('.badge');
+        if (badge) badge.textContent = g.inv[k];
+      }
+      refreshBlockRects(); // the toolbar grew / shrank
     }
   }
 

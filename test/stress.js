@@ -43,6 +43,19 @@ function useInventory(g, rnd) {
     if (g.inv.light > 0 && rnd() < 0.5) g.placeFeature(n, 'light');
     else if (g.inv.round > 0 && rnd() < 0.5) g.placeFeature(n, 'round');
   }
+  // grade-separated toys: overpasses on any four-way crossing, a few tunnels / big roundabouts at random spots
+  for (let n = 0; n < w.n && g.inv.ovp > 0; n++) if (w.deg(n) === 4 && !w.feat[n] && !w.bld[n] && rnd() < 0.5) g.placeFeature(n, 'ovp');
+  for (let k = 0; k < 20 && g.inv.tun > 0; k++) {
+    const n = Math.floor(rnd() * w.n), d = Math.floor(rnd() * 4);
+    let m = n;
+    const len = 2 + Math.floor(rnd() * 5);
+    for (let j = 0; j < len && m >= 0; j++) m = w.nbGrid(m, d);
+    if (m >= 0 && (w.deg(n) > 0 || w.deg(m) > 0)) g.addTunnel(n, m);
+  }
+  for (let k = 0; k < 40 && g.inv.big > 0; k++) {
+    const n = Math.floor(rnd() * w.n);
+    if (w.deg(n) > 0 || w.deg(w.nbGrid(n, 0) < 0 ? n : w.nbGrid(n, 0)) > 0) g.placeBig(n);
+  }
   for (let n = 0; n < w.n && g.inv.hw > 0; n++) {
     const e = w.nb(n, 1);
     if (e >= 0 && w.eE[n] === 1 && !w.water[n] && !w.water[e] && rnd() < 0.3) g.addEdge(n, e, 2);
