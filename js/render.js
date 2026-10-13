@@ -6,11 +6,10 @@
   const C = CFG.CELL;
 
   const THEME = {
-    board: '#f6f3ea',
-    boardEdge: '#e4dfd0',
-    dot: 'rgba(60,60,50,0.09)',
-    shore: '#d5ecf5',
-    water: '#b7dcec',
+    board: '#bcd98f', // forest-floor grass
+    dot: 'rgba(255,255,255,0.28)',
+    shore: '#cdeef0',
+    water: '#8ed1de',
     roadEdge: '#56637a',
     road: '#8e9bb0',
     hwEdge: '#bd7414',
@@ -44,6 +43,7 @@
       this.hover = -1;
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
+      this.scn = null; // decorative scenery (trees, flowing water, clouds)
       this.cam = { zoom: 1, cx: 0, cy: 0 }; // camera: zoom >= 1 (1 = whole map fits), cx/cy = world point at the screen centre
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
@@ -51,6 +51,7 @@
 
     setGame(game) {
       this.game = game;
+      this.scn = new MM.Scenery(game);
       this.fx = [];
       this.statics = null;
       this.resetCamera();
@@ -141,15 +142,19 @@
     // ------------------------------------------------------------ static layer (land, water, lattice) — full screen
     buildStatics() {
       const g = this.game, v = this.view, w = g.world;
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(v.w * v.dpr);
-      cv.height = Math.round(v.h * v.dpr);
+      // reuse one canvas (allocating a screen-sized canvas every frame makes pinch-zooming stutter)
+      const cv = this._staticCv || (this._staticCv = document.createElement('canvas'));
+      const cw = Math.round(v.w * v.dpr), ch = Math.round(v.h * v.dpr);
+      if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
       const ctx = cv.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
       ctx.scale(v.dpr, v.dpr);
       ctx.fillStyle = THEME.board;
       ctx.fillRect(0, 0, v.w, v.h);
       ctx.translate(v.ox, v.oy);
       ctx.scale(v.scale, v.scale);
+      this.scn.drawGround(ctx); // grass patches, tufts and flowers
       // lattice dots
       ctx.fillStyle = THEME.dot;
       for (let n = 0; n < w.n; n++) {
@@ -275,6 +280,12 @@
       ctx.save();
       ctx.translate(x, y);
       ctx.scale(sc, sc);
+      // a cleared patch of ground in the forest (also keeps the building colours readable on the grass)
+      const pr = b.kind === 'house' ? 20 : 28;
+      ctx.fillStyle = 'rgba(214,200,150,0.55)';
+      ctx.beginPath(); ctx.ellipse(0, 1.5, pr + 4, pr + 1, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(247,240,214,0.96)';
+      ctx.beginPath(); ctx.ellipse(0, 0.5, pr, pr - 2, 0, 0, 6.2832); ctx.fill();
       if (b.kind === 'house') {
         const sz = 24;
         ctx.fillStyle = 'rgba(0,0,0,0.12)';
@@ -368,6 +379,8 @@
       if (!this.statics) this.buildStatics();
       const st = this.statics;
       ctx.drawImage(st.cv, 0, 0, v.w, v.h);
+      const clock = now / 1000;
+      this.scn.drawBehind(ctx, v, clock, g.world); // flowing water, swaying trees
 
       ctx.save();
       ctx.translate(v.ox, v.oy);
@@ -614,6 +627,7 @@
       }
       ctx.restore();
       ctx.restore();
+      this.scn.drawSky(ctx, v, clock); // cloud shadows, clouds, drifting petals
     }
 
     addEvents(events) {

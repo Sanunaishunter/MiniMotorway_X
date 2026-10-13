@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#f6f3ea">
+  <meta name="theme-color" content="#bcd98f">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -67,19 +67,15 @@
         <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="9.5" class="stroke-thick g"/><circle cx="16" cy="16" r="3" fill="#9fd3a8"/></svg>
         <span>圓環</span><em class="badge" id="cntRound">0</em>
       </button>
-      <button class="tool locked" data-tool="big" title="大圓環 (5)">
-        <svg viewBox="0 0 32 32"><rect x="5" y="5" width="22" height="22" rx="9" class="stroke-thick g" fill="none"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8" stroke="none"/></svg>
-        <span>大圓環</span><em class="badge" id="cntBig">0</em>
-      </button>
-      <button class="tool locked" data-tool="ovp" title="高架 (6)">
+      <button class="tool locked" data-tool="ovp" title="高架 (5)">
         <svg viewBox="0 0 32 32"><path d="M3 21H29" class="stroke-thick g"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>
         <span>高架</span><em class="badge" id="cntOvp">0</em>
       </button>
-      <button class="tool locked" data-tool="tun" title="隧道 (7):從入口拖到出口">
+      <button class="tool locked" data-tool="tun" title="隧道 (6):從入口拖到出口">
         <svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0" stroke="none"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643" stroke="none"/></svg>
         <span>隧道</span><em class="badge" id="cntTun">0</em>
       </button>
-      <button class="tool" data-tool="erase" title="橡皮擦 (8 / 右鍵拖曳)">
+      <button class="tool" data-tool="erase" title="橡皮擦 (7 / 右鍵拖曳)">
         <svg viewBox="0 0 32 32"><path d="M6 21l11-12 8 7-6 7H10z" class="fill pink"/><path d="M19 23h8" class="stroke"/></svg>
         <span>橡皮擦</span>
       </button>
@@ -96,6 +92,7 @@
 
   <script src="js/core.js"></script>
   <script src="js/sim.js"></script>
+  <script src="js/scenery.js"></script>
   <script src="js/render.js"></script>
   <script src="js/ui.js"></script>
 </body>

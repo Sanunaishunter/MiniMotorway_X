@@ -17,7 +17,7 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #f6f3ea;
+  background: #bcd98f;
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   -webkit-user-select: none;

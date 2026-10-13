@@ -156,7 +156,7 @@
       <ol class="tips">
         <li><b>拖曳</b>畫出道路,把房子連到<b>同顏色</b>的目的地。</li>
         <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿即<b>遊戲結束</b>。</li>
-        <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路。</li>
+        <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路、高架、隧道。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
         <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
       </ol>
@@ -468,7 +468,7 @@
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'big', 6: 'ovp', 7: 'tun', 8: 'erase' };
+    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'ovp', 6: 'tun', 7: 'erase' };
     const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
@@ -504,7 +504,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'big', 'ovp', 'tun'];
+  const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'ovp', 'tun']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {

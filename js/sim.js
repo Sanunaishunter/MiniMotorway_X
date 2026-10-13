@@ -6,12 +6,11 @@
 
   MM.UPGRADES = [
     { id: 'light', amount: 3, title: '紅綠燈', desc: '放在三岔以上的路口,讓同方向的車連續通過。' },
-    { id: 'round', amount: 2, title: '圓環', desc: '路口可同時容納兩輛車,減少停等。' },
+    { id: 'round', amount: 4, title: '圓環', desc: '路口可同時容納兩輛車,減少停等。' },
     { id: 'bridge', amount: 6, title: '橋樑', desc: '讓道路可以跨越河流與湖泊(每段 1 個)。' },
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
-    { id: 'big', amount: 1, title: '大圓環', desc: '3×3 格的逆時針單向環島(約為圓環的 3 倍大),可同時容納很多車。' },
   ];
 
   const HOUSES_PER_DEST = 4;
