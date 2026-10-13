@@ -10,15 +10,19 @@
     dot: 'rgba(255,255,255,0.28)',
     shore: '#cdeef0',
     water: '#8ed1de',
-    roadEdge: '#56637a',
-    road: '#8e9bb0',
-    hwEdge: '#bd7414',
-    hw: '#f4ab45',
+    roadEdge: '#4f5766',
+    road: '#767d89', // asphalt
+    sidewalk: '#e2decd',
+    hwEdge: '#3f8a63', // expressway verge (green)
+    hw: '#59616d', // darker expressway asphalt
     bridgeEdge: '#ffffff',
     ink: '#2f3a4b',
   };
 
   const MAX_ZOOM = 3;
+  const CAR_KINDS = ['sedan', 'sedan', 'kei', 'kei', 'van', 'truck', 'taxi']; // body styles, picked by car id
+  const R_NARROW = 16; // asphalt width of an ordinary (two-lane) road
+  const R_HW = 18; // ... of an expressway
   const OFF = 4.0; // lane offset from the road centre line
   const lerp = (a, b, t) => a + (b - a) * t;
   const easeOutBack = (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
@@ -249,9 +253,13 @@
       return 0;
     }
 
+    /** Cosmetic body style, picked from the car id (never affects the simulation). */
+    carKind(car) { return CAR_KINDS[((car.id * 2654435761) >>> 0) % CAR_KINDS.length]; }
+
     drawCar(ctx, car, elevated) {
       const pose = this.carPose(car);
       const col = MM.COLORS[car.color];
+      const kind = this.carKind(car);
       ctx.save();
       ctx.translate(pose.x, pose.y - (elevated ? 3 : 0));
       ctx.rotate(pose.a);
@@ -262,12 +270,30 @@
       ctx.fillStyle = col.main;
       ctx.strokeStyle = col.dark;
       ctx.lineWidth = 1;
-      rr(ctx, -6.2, -3.5, 12.4, 7, 2.2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      rr(ctx, 0.8, -2.4, 2.8, 4.8, 1);
-      ctx.fill();
+      const glass = 'rgba(255,255,255,0.78)';
+      if (kind === 'kei') { // 軽自動車: short, tall and boxy
+        rr(ctx, -5.3, -3.65, 10.6, 7.3, 1.8); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.28)'; rr(ctx, -3.7, -2.6, 6.6, 5.2, 1.4); ctx.fill();
+        ctx.fillStyle = glass; rr(ctx, 1.5, -2.3, 2.1, 4.6, 0.8); ctx.fill();
+      } else if (kind === 'van') { // ミニバン
+        rr(ctx, -6.2, -3.7, 12.4, 7.4, 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.24)'; rr(ctx, -5, -2.8, 9, 5.6, 1.5); ctx.fill();
+        ctx.fillStyle = glass; rr(ctx, 3.3, -2.4, 2.2, 4.8, 0.8); ctx.fill();
+      } else if (kind === 'truck') { // 軽トラ: cab in front, open bed behind
+        rr(ctx, 1.2, -3.5, 5, 7, 1.8); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = glass; rr(ctx, 3.8, -2.3, 1.8, 4.6, 0.6); ctx.fill();
+        ctx.fillStyle = '#d3cbb4'; ctx.strokeStyle = '#8f866f'; ctx.lineWidth = 0.8;
+        rr(ctx, -6.2, -3.3, 7.4, 6.6, 1); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = 'rgba(120,108,84,0.7)'; ctx.beginPath(); ctx.moveTo(-3.2, -2.5); ctx.lineTo(-3.2, 2.5); ctx.stroke();
+      } else { // sedan, and the taxi (a sedan with the roof lantern 行燈)
+        rr(ctx, -6.2, -3.5, 12.4, 7, 2.2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = glass; rr(ctx, 0.8, -2.4, 2.8, 4.8, 1); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.45)'; rr(ctx, -4.6, -2.2, 1.8, 4.4, 0.8); ctx.fill();
+        if (kind === 'taxi') {
+          ctx.fillStyle = '#fff3b8'; ctx.strokeStyle = '#e0a21c'; ctx.lineWidth = 0.7;
+          rr(ctx, -2.2, -1.3, 2.6, 2.6, 0.8); ctx.fill(); ctx.stroke();
+        }
+      }
       ctx.restore();
     }
 
@@ -427,17 +453,102 @@
       }
       const isBridge = (a, b) => w.water[a] === 1 || w.water[b] === 1;
       if (edges.length) {
+        // Layers are drawn for ALL roads before the next layer starts, so junctions merge cleanly:
+        // sidewalk -> white edge line -> asphalt. (The white line is just a slightly wider stroke under the asphalt.)
         ctx.lineCap = 'butt';
         strokeEdges(27, 'rgba(40,70,90,0.18)', isBridge);
         strokeEdges(24, 'rgba(255,255,255,0.97)', isBridge);
-        strokeEdges(19.5, THEME.roadEdge, (a, b, t) => t === 1);
-        strokeEdges(23.5, THEME.hwEdge, (a, b, t) => t === 2);
-        strokeEdges(16, THEME.road, (a, b, t) => t === 1);
-        strokeEdges(19.5, THEME.hw, (a, b, t) => t === 2);
-        // highway centre dashes
-        ctx.setLineDash([5, 6]);
-        strokeEdges(1.6, 'rgba(255,255,255,0.9)', (a, b, t) => t === 2);
+        ctx.lineCap = 'round';
+        strokeEdges(R_NARROW + 8, THEME.sidewalk, (a, b, t) => t === 1);
+        strokeEdges(R_HW + 8, THEME.hwEdge, (a, b, t) => t === 2);
+        strokeEdges(R_NARROW + 2.6, '#ffffff', (a, b, t) => t === 1);
+        strokeEdges(R_HW + 2.6, '#ffffff', (a, b, t) => t === 2);
+        strokeEdges(R_NARROW, THEME.road, (a, b, t) => t === 1);
+        strokeEdges(R_HW, THEME.hw, (a, b, t) => t === 2);
+
+        // centre lines: white dashes, stopped short of junctions (where the zebra crossings go) and buildings
+        ctx.lineCap = 'butt';
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        for (let k = 0; k < edges.length; k += 4) {
+          const a = edges[k], b = edges[k + 1];
+          const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
+          const ta = w.isJunction(a) ? 17 : w.bld[a] ? 15 : 0, tb = w.isJunction(b) ? 17 : w.bld[b] ? 15 : 0;
+          const ux = Math.sign(bx - ax), uy = Math.sign(by - ay), len = C - ta - tb;
+          if (len < 7) continue;
+          ctx.moveTo(ax + ux * ta, ay + uy * ta);
+          ctx.lineTo(bx - ux * tb, by - uy * tb);
+        }
+        ctx.stroke();
         ctx.setLineDash([]);
+
+        // junction details: zebra crossings + stop lines on every approach, "止まれ" signs at plain junctions
+        const detail = v.scale >= 0.4;
+        for (let n = 0; n < w.n; n++) {
+          if (!w.isJunction(n)) continue;
+          const x = this.nodeX(n), y = this.nodeY(n);
+          const plain = !w.feat[n] && !w.ringId[n];
+          for (let d = 0; d < 4; d++) {
+            const t = w.rawE(n, d) & 3;
+            if (!t || w.tun.has(n * 4 + d)) continue;
+            ctx.save();
+            ctx.translate(x + MM.DX[d] * 13.5, y + MM.DY[d] * 13.5);
+            ctx.rotate(Math.atan2(MM.DY[d], MM.DX[d]));
+            ctx.fillStyle = 'rgba(255,255,255,0.93)';
+            for (let i = 0; i < 5; i++) ctx.fillRect(-2.6, -7.05 + i * 3.1, 5.2, 1.7); // zebra bars run along the road
+            ctx.fillRect(4.1, -7.4, 1.8, 6.6); // stop line, on the lane that drives towards the junction
+            if (detail && plain) {
+              ctx.translate(4.6, -13.5); // 止まれ: red inverted triangle on the roadside
+              ctx.fillStyle = '#ffffff';
+              ctx.beginPath(); ctx.moveTo(-3.6, -3); ctx.lineTo(3.6, -3); ctx.lineTo(0, 3.6); ctx.closePath(); ctx.fill();
+              ctx.fillStyle = '#e53a35';
+              ctx.beginPath(); ctx.moveTo(-2.4, -2.1); ctx.lineTo(2.4, -2.1); ctx.lineTo(0, 2.1); ctx.closePath(); ctx.fill();
+            }
+            ctx.restore();
+          }
+        }
+
+        // expressway entrances / exits carry a green sign board
+        if (detail) {
+          for (let k = 0; k < edges.length; k += 4) {
+            if (edges[k + 2] !== 2) continue;
+            for (const [n, m] of [[edges[k], edges[k + 1]], [edges[k + 1], edges[k]]]) {
+              let other = false;
+              for (let d = 0; d < 4; d++) { const t = w.rawE(n, d) & 3; if (t && t !== 2) other = true; }
+              if (!other && !w.bld[n]) continue;
+              const dx = Math.sign(this.nodeX(m) - this.nodeX(n)), dy = Math.sign(this.nodeY(m) - this.nodeY(n));
+              ctx.save();
+              ctx.translate(this.nodeX(n) + dx * 21, this.nodeY(n) + dy * 21);
+              ctx.rotate(Math.atan2(dy, dx));
+              ctx.fillStyle = '#2f7a55'; rr(ctx, -4.5, -17, 9, 5.4, 1.2); ctx.fill();
+              ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.8; rr(ctx, -4.5, -17, 9, 5.4, 1.2); ctx.stroke();
+              ctx.fillStyle = '#ffffff'; ctx.fillRect(-2.6, -14.5, 5.2, 0.9); ctx.fillRect(-2.6, -13.1, 3.4, 0.9);
+              ctx.restore();
+            }
+          }
+        }
+
+        // utility poles (電柱) beside straight stretches
+        if (detail) {
+          for (let n = 0; n < w.n; n++) {
+            const dg = w.deg(n);
+            if (dg !== 2 || w.bld[n] || (((n * 2654435761) >>> 0) % 6) !== 0) continue;
+            const hor = w.edge(n, 1) && w.edge(n, 3), ver = w.edge(n, 0) && w.edge(n, 2);
+            if (!hor && !ver) continue;
+            const side = (((n * 40503) >>> 0) & 1) ? 1 : -1;
+            const px = this.nodeX(n) + (ver ? side * 15 : 0), py = this.nodeY(n) + (hor ? side * 15 : 0);
+            ctx.fillStyle = 'rgba(20,40,30,0.22)';
+            ctx.beginPath(); ctx.ellipse(px + 1.5, py + 2, 2.6, 1.6, 0, 0, 6.2832); ctx.fill();
+            ctx.strokeStyle = '#4a3f35'; ctx.lineWidth = 1.1;
+            ctx.beginPath();
+            if (hor) { ctx.moveTo(px - 3, py); ctx.lineTo(px + 3, py); } else { ctx.moveTo(px, py - 3); ctx.lineTo(px, py + 3); }
+            ctx.stroke();
+            ctx.fillStyle = '#6b5a48';
+            ctx.beginPath(); ctx.arc(px, py, 1.7, 0, 6.2832); ctx.fill();
+          }
+        }
       }
 
       // ---- big roundabouts: green island in the middle, arrows showing the (counter-clockwise) flow
@@ -531,6 +642,8 @@
         ctx.beginPath(); ctx.arc(x, y, 12.5, 0, 6.2832); ctx.fill();
         ctx.fillStyle = '#2f3643';
         ctx.beginPath(); ctx.arc(x, y, 9.5, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#ffae3a'; // the orange lamps along a Japanese tunnel mouth
+        for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.arc(x - MM.DY[d] * i * 6.2 + MM.DX[d] * 9.2, y + MM.DX[d] * i * 6.2 + MM.DY[d] * 9.2, 1.5, 0, 6.2832); ctx.fill(); }
         ctx.fillStyle = 'rgba(255,255,255,0.8)';
         const dx = MM.DX[d], dy = MM.DY[d];
         ctx.beginPath();
