@@ -19,6 +19,7 @@
     ink: '#2f3a4b',
   };
 
+  const MAX_ZOOM = 3;
   const OFF = 4.0; // lane offset from the road centre line
   const lerp = (a, b, t) => a + (b - a) * t;
   const easeOutBack = (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
@@ -39,10 +40,11 @@
       this.ctx = canvas.getContext('2d');
       this.game = null;
       this.view = { scale: 1, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
-      this.insets = { top: 70, bottom: 96, side: 12 };
       this.fx = [];
       this.hover = -1;
       this.tool = 'road';
+      this.preview = null; // {a, b, reason} while dragging a tunnel
+      this.cam = { zoom: 1, cx: 0, cy: 0 }; // camera: zoom >= 1 (1 = whole map fits), cx/cy = world point at the screen centre
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
     }
@@ -51,7 +53,7 @@
       this.game = game;
       this.fx = [];
       this.statics = null;
-      this.layout();
+      this.resetCamera();
     }
 
     resize(w, h, dpr) {
@@ -61,27 +63,67 @@
       this.layout();
     }
 
-    /** Pick a grid that fills the screen at a comfortable zoom (smaller maps on small screens). */
+    /** Pick a grid that fills the whole screen at a comfortable zoom (smaller maps on small screens). */
     suggestGrid() {
       const v = this.view;
-      const aw = Math.max(240, v.w - this.insets.side * 2);
-      const ah = Math.max(240, v.h - this.insets.top - this.insets.bottom);
+      const aw = Math.max(240, v.w), ah = Math.max(200, v.h);
       const s = Math.max(0.55, Math.sqrt((aw * ah) / (760 * C * C)));
-      const cols = Math.max(16, Math.min(46, Math.floor(aw / (C * s))));
-      const rows = Math.max(12, Math.min(34, Math.floor(ah / (C * s))));
+      const cols = Math.max(16, Math.min(60, Math.floor(aw / (C * s))));
+      const rows = Math.max(10, Math.min(40, Math.floor(ah / (C * s))));
       return { cols, rows };
+    }
+
+    /** Scale / offset that fit a cols x rows grid into the screen (the map is full-screen; leftover is plain land). */
+    viewFor(cols, rows) {
+      const v = this.view;
+      const scale = Math.max(0.2, Math.min(v.w / (cols * C), v.h / (rows * C)));
+      return { scale, ox: (v.w - cols * C * scale) / 2, oy: (v.h - rows * C * scale) / 2 };
     }
 
     layout() {
       const g = this.game, v = this.view;
       if (!g) return;
+      const fit = this.viewFor(g.cols, g.rows).scale;
+      const cam = this.cam;
+      const scale = fit * cam.zoom;
+      // keep the map covering the screen (or centred where it is smaller than the screen)
       const bw = g.cols * C, bh = g.rows * C;
-      const aw = v.w - this.insets.side * 2;
-      const ah = v.h - this.insets.top - this.insets.bottom;
-      v.scale = Math.max(0.2, Math.min(aw / bw, ah / bh));
-      v.ox = (v.w - bw * v.scale) / 2;
-      v.oy = this.insets.top + (ah - bh * v.scale) / 2;
+      const hw = v.w / 2 / scale, hh = v.h / 2 / scale;
+      cam.cx = bw * scale <= v.w ? bw / 2 : Math.max(hw, Math.min(bw - hw, cam.cx));
+      cam.cy = bh * scale <= v.h ? bh / 2 : Math.max(hh, Math.min(bh - hh, cam.cy));
+      v.scale = scale;
+      v.ox = v.w / 2 - cam.cx * scale;
+      v.oy = v.h / 2 - cam.cy * scale;
       this.statics = null;
+    }
+
+    resetCamera() {
+      const g = this.game;
+      this.cam.zoom = 1;
+      if (g) { this.cam.cx = g.cols * C / 2; this.cam.cy = g.rows * C / 2; }
+      this.layout();
+    }
+
+    isZoomed() { return this.cam.zoom > 1.001; }
+
+    /** Pan by (dx, dy) screen pixels (the map follows the fingers). */
+    panBy(dx, dy) {
+      this.cam.cx -= dx / this.view.scale;
+      this.cam.cy -= dy / this.view.scale;
+      this.layout();
+    }
+
+    /** Zoom by `factor`, keeping the map point under screen position (px, py) fixed. */
+    zoomAt(px, py, factor) {
+      const v = this.view, cam = this.cam;
+      const fit = v.scale / cam.zoom;
+      const wx = (px - v.ox) / v.scale, wy = (py - v.oy) / v.scale;
+      cam.zoom = Math.max(1, Math.min(MAX_ZOOM, cam.zoom * factor));
+      const scale = fit * cam.zoom;
+      // after zooming, the map point (wx, wy) must still sit under (px, py):  ox' = px - wx*scale = w/2 - cx'*scale
+      cam.cx = wx + (v.w / 2 - px) / scale;
+      cam.cy = wy + (v.h / 2 - py) / scale;
+      this.layout();
     }
 
     nodeX(n) { return ((n % this.game.cols) + 0.5) * C; }
@@ -96,30 +138,18 @@
       return r * g.cols + c;
     }
 
-    // ------------------------------------------------------------ static layer (board, water, lattice)
+    // ------------------------------------------------------------ static layer (land, water, lattice) — full screen
     buildStatics() {
       const g = this.game, v = this.view, w = g.world;
-      const pad = 40;
-      const bw = g.cols * C, bh = g.rows * C;
       const cv = document.createElement('canvas');
-      const sc = v.scale * v.dpr;
-      cv.width = Math.ceil((bw + pad * 2) * sc);
-      cv.height = Math.ceil((bh + pad * 2) * sc);
+      cv.width = Math.round(v.w * v.dpr);
+      cv.height = Math.round(v.h * v.dpr);
       const ctx = cv.getContext('2d');
-      ctx.scale(sc, sc);
-      ctx.translate(pad, pad);
-      // shadow + board
-      ctx.save();
-      ctx.shadowColor = 'rgba(40,50,40,0.22)';
-      ctx.shadowBlur = 26;
-      ctx.shadowOffsetY = 8;
+      ctx.scale(v.dpr, v.dpr);
       ctx.fillStyle = THEME.board;
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.fill();
-      ctx.restore();
-      ctx.save();
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.clip();
+      ctx.fillRect(0, 0, v.w, v.h);
+      ctx.translate(v.ox, v.oy);
+      ctx.scale(v.scale, v.scale);
       // lattice dots
       ctx.fillStyle = THEME.dot;
       for (let n = 0; n < w.n; n++) {
@@ -128,7 +158,9 @@
         ctx.arc(this.nodeX(n), this.nodeY(n), 1.7, 0, 6.2832);
         ctx.fill();
       }
-      // water: rounded-square cells fused together (shore pass, then deep pass)
+      // water: rounded-square cells fused together (shore pass, then deep pass); water touching the
+      // edge of the grid is extended past it so it runs off-screen instead of stopping at the grid.
+      const EXT = Math.max(v.w, v.h) / v.scale;
       const pass = (rr, color) => {
         const h = C / 2 - C * 0.3; // half size of the cell core (same for both passes)
         ctx.fillStyle = color;
@@ -139,10 +171,13 @@
         for (let n = 0; n < w.n; n++) {
           if (!w.water[n]) continue;
           const x = this.nodeX(n), y = this.nodeY(n);
-          ctx.rect(x - h, y - h, 2 * h, 2 * h);
+          const c = n % g.cols, r = (n / g.cols) | 0;
+          const x0 = c === 0 ? x - h - EXT : x - h, x1 = c === g.cols - 1 ? x + h + EXT : x + h;
+          const y0 = r === 0 ? y - h - EXT : y - h, y1 = r === g.rows - 1 ? y + h + EXT : y + h;
+          ctx.rect(x0, y0, x1 - x0, y1 - y0);
           const e = w.nb(n, 1), s = w.nb(n, 2);
-          if (e >= 0 && w.water[e]) ctx.rect(x - h, y - h, C + 2 * h, 2 * h);
-          if (s >= 0 && w.water[s]) ctx.rect(x - h, y - h, 2 * h, C + 2 * h);
+          if (e >= 0 && w.water[e]) ctx.rect(x - h, y0, C + 2 * h, y1 - y0);
+          if (s >= 0 && w.water[s]) ctx.rect(x0, y - h, x1 - x0, C + 2 * h);
           if (e >= 0 && s >= 0 && w.water[e] && w.water[s] && w.water[s + 1]) ctx.rect(x + h, y + h, C - 2 * h, C - 2 * h);
         }
         ctx.fill();
@@ -150,14 +185,14 @@
       };
       pass(C * 0.3 + 3.5, THEME.shore);
       pass(C * 0.3, THEME.water);
-      ctx.restore();
-      this.statics = { cv, pad, sc };
+      this.statics = { cv };
     }
 
     // ------------------------------------------------------------ cars
     carPose(car) {
-      const g = this.game, w = g.world;
       const p = car.path, i = car.i, s = car.s;
+      const len = this.game.lenOf(car.lane); // lane length in cells (tunnels are long)
+      const zone = 0.25 / len; // the corner blend covers 0.25 cell on each side of a node
       const a = p[i], b = p[i + 1];
       const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
       const dx = Math.sign(bx - ax), dy = Math.sign(by - ay);
@@ -182,28 +217,42 @@
         out.a = Math.atan2(ty, tx);
         return true;
       };
-      if (s > 0.75 && c !== undefined) {
+      if (s > 1 - zone && c !== undefined) {
         const cx = Math.sign(this.nodeX(c) - bx), cy = Math.sign(this.nodeY(c) - by);
-        if (corner(b, [dx, dy], [cx, cy], (s - 0.75) * 2)) return out;
-      } else if (s < 0.25 && pr !== undefined) {
+        if (corner(b, [dx, dy], [cx, cy], (s - (1 - zone)) * len * 2)) return out;
+      } else if (s < zone && pr !== undefined) {
         const px = Math.sign(ax - this.nodeX(pr)), py = Math.sign(ay - this.nodeY(pr));
-        if (corner(a, [px, py], [dx, dy], 0.5 + s * 2)) return out;
+        if (corner(a, [px, py], [dx, dy], 0.5 + s * len * 2)) return out;
       }
       out.x = lerp(ax, bx, s) + nx * OFF;
       out.y = lerp(ay, by, s) + ny * OFF;
       out.a = Math.atan2(dy, dx);
-      void w;
       return out;
     }
 
-    drawCar(ctx, car) {
+    /** 0 = on the ground, 1 = on an overpass deck, 2 = hidden inside a tunnel. */
+    carLevel(car) {
+      const g = this.game, w = g.world;
+      const len = g.lenOf(car.lane);
+      const a = car.path[car.i], b = car.path[car.i + 1];
+      const cells = car.s * len; // distance travelled along the lane, in cells
+      if (len > 1 && cells > 0.35 && len - cells > 0.35) return 2;
+      if (((car.lane & 3) & 1) === 0) { // vertical lanes go over a crossing road
+        if (w.feat[b] === 3 && len - cells < 0.6) return 1;
+        if (w.feat[a] === 3 && cells < 0.6) return 1;
+      }
+      return 0;
+    }
+
+    drawCar(ctx, car, elevated) {
       const pose = this.carPose(car);
       const col = MM.COLORS[car.color];
       ctx.save();
-      ctx.translate(pose.x, pose.y);
+      ctx.translate(pose.x, pose.y - (elevated ? 3 : 0));
       ctx.rotate(pose.a);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      rr(ctx, -5.8, -2.8, 12.4, 7, 2.2);
+      if (elevated) ctx.scale(1.12, 1.12);
+      ctx.fillStyle = elevated ? 'rgba(20,30,50,0.28)' : 'rgba(0,0,0,0.18)';
+      rr(ctx, -5.8, elevated ? 0.4 : -2.8, 12.4, 7, 2.2);
       ctx.fill();
       ctx.fillStyle = col.main;
       ctx.strokeStyle = col.dark;
@@ -263,18 +312,24 @@
       ctx.restore();
 
       if (b.kind === 'dest') {
-        // pins
+        // pins: solid = waiting for a car, faded = a car is already on its way
         const slots = Math.max(CFG.PIN_LIMIT, b.pins);
+        const waiting = b.pins - b.inbound;
         for (let k = 0; k < b.pins; k++) {
           const ang = -Math.PI / 2 + (k / slots) * 6.2832;
           const px = x + Math.cos(ang) * 30, py = y + Math.sin(ang) * 30;
+          const solid = k < waiting;
           ctx.beginPath();
-          ctx.arc(px, py, 4.8, 0, 6.2832);
+          ctx.arc(px, py, solid ? 4.8 : 3.6, 0, 6.2832);
+          ctx.globalAlpha = solid ? 1 : 0.4;
           ctx.fillStyle = col.main;
           ctx.fill();
-          ctx.lineWidth = 1.6;
-          ctx.strokeStyle = '#fff';
-          ctx.stroke();
+          if (solid) {
+            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
         }
         if (b.overflow > 0.001) {
           const pulse = 0.6 + 0.4 * Math.sin(time * 9);
@@ -312,37 +367,51 @@
       if (!g) return;
       if (!this.statics) this.buildStatics();
       const st = this.statics;
-      ctx.drawImage(st.cv, v.ox - st.pad * v.scale, v.oy - st.pad * v.scale, st.cv.width / st.sc * v.scale, st.cv.height / st.sc * v.scale);
+      ctx.drawImage(st.cv, 0, 0, v.w, v.h);
 
       ctx.save();
       ctx.translate(v.ox, v.oy);
       ctx.scale(v.scale, v.scale);
       const w = g.world;
-      const bw = g.cols * C, bh = g.rows * C;
       ctx.save();
-      rr(ctx, 0, 0, bw, bh, 22);
-      ctx.clip();
 
       // ---- roads
       const edges = [];
       for (let n = 0; n < w.n; n++) {
         const e = w.eE[n];
-        if (e) edges.push(n, n + 1, e);
+        if (e) edges.push(n, n + 1, e & 3, e >> 2);
         const s = w.eS[n];
-        if (s) edges.push(n, n + w.cols, s);
+        if (s) edges.push(n, n + w.cols, s & 3, s >> 2);
       }
       const strokeEdges = (width, color, filter) => {
         ctx.lineWidth = width;
         ctx.strokeStyle = color;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        for (let k = 0; k < edges.length; k += 3) {
+        for (let k = 0; k < edges.length; k += 4) {
           if (!filter(edges[k], edges[k + 1], edges[k + 2])) continue;
           ctx.moveTo(this.nodeX(edges[k]), this.nodeY(edges[k]));
           ctx.lineTo(this.nodeX(edges[k + 1]), this.nodeY(edges[k + 1]));
         }
         ctx.stroke();
       };
+      // tunnels run underneath: dashed line below the roads
+      if (w.tun.size) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = 'rgba(70,82,104,0.30)';
+        ctx.setLineDash([3, 8]);
+        ctx.beginPath();
+        for (const [key, t] of w.tun) {
+          const a = key >> 2;
+          if (a > t.to) continue;
+          ctx.moveTo(this.nodeX(a), this.nodeY(a));
+          ctx.lineTo(this.nodeX(t.to), this.nodeY(t.to));
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
       const isBridge = (a, b) => w.water[a] === 1 || w.water[b] === 1;
       if (edges.length) {
         ctx.lineCap = 'butt';
@@ -358,10 +427,34 @@
         ctx.setLineDash([]);
       }
 
+      // ---- big roundabouts: green island in the middle, arrows showing the (counter-clockwise) flow
+      for (const big of g.bigs.values()) {
+        const x = this.nodeX(big.center), y = this.nodeY(big.center);
+        // the whole 3x3 area inside the ring is a lawn island
+        ctx.fillStyle = '#a9d9b1';
+        rr(ctx, x - 30.5, y - 30.5, 61, 61, 15); ctx.fill();
+        ctx.fillStyle = '#8cc89d';
+        rr(ctx, x - 22, y - 22, 44, 44, 11); ctx.fill();
+        ctx.fillStyle = '#6fb383';
+        for (const [tx, ty, tr] of [[-9, -8, 6], [8, 5, 7], [-4, 11, 4.5], [11, -11, 4]]) { ctx.beginPath(); ctx.arc(x + tx, y + ty, tr, 0, 6.2832); ctx.fill(); }
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        for (let i = 0; i < 8; i++) {
+          const a = big.nodes[i], b = big.nodes[(i + 1) % 8];
+          const mx = (this.nodeX(a) + this.nodeX(b)) / 2, my = (this.nodeY(a) + this.nodeY(b)) / 2;
+          const dx = Math.sign(this.nodeX(b) - this.nodeX(a)), dy = Math.sign(this.nodeY(b) - this.nodeY(a));
+          ctx.beginPath();
+          ctx.moveTo(mx + dx * 4.5, my + dy * 4.5);
+          ctx.lineTo(mx - dx * 3 - dy * 3.5, my - dy * 3 + dx * 3.5);
+          ctx.lineTo(mx - dx * 3 + dy * 3.5, my - dy * 3 - dx * 3.5);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+
       // ---- features (roundabouts, traffic lights)
       for (let n = 0; n < w.n; n++) {
         const f = w.feat[n];
-        if (!f) continue;
+        if (!f || f === 3) continue;
         const x = this.nodeX(n), y = this.nodeY(n);
         if (f === 2) {
           ctx.fillStyle = THEME.roadEdge;
@@ -387,25 +480,103 @@
         }
       }
 
-      // ---- cars (under buildings so they appear to enter/leave them)
-      for (const car of g.cars) if (!car.dead) this.drawCar(ctx, car);
+      // ---- cars (under buildings so they appear to enter/leave them): ground level, then overpass decks, then
+      //      the cars driving on top of them; cars inside a tunnel are not drawn
+      const elevated = [];
+      for (const car of g.cars) {
+        if (car.dead) continue;
+        const lv = this.carLevel(car);
+        if (lv === 0) this.drawCar(ctx, car, false);
+        else if (lv === 1) elevated.push(car);
+      }
+      for (let n = 0; n < w.n; n++) {
+        if (w.feat[n] !== 3) continue;
+        const x = this.nodeX(n), y = this.nodeY(n);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = 'rgba(25,35,55,0.30)';
+        rr(ctx, -9, -24, 28, 64, 7); ctx.fill();
+        ctx.fillStyle = THEME.roadEdge;
+        rr(ctx, -14, -32, 28, 64, 7); ctx.fill();
+        ctx.fillStyle = '#c3cddd';
+        rr(ctx, -11.5, -32, 23, 64, 5); ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(-9.5, -28); ctx.lineTo(-9.5, 28); ctx.moveTo(9.5, -28); ctx.lineTo(9.5, 28); ctx.stroke();
+        ctx.strokeStyle = 'rgba(86,99,122,0.7)';
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(0, 28); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+      for (const car of elevated) this.drawCar(ctx, car, true);
+      // tunnel mouths
+      for (const [key, t] of w.tun) {
+        const a = key >> 2, d = key & 3;
+        const x = this.nodeX(a), y = this.nodeY(a);
+        ctx.fillStyle = THEME.roadEdge;
+        ctx.beginPath(); ctx.arc(x, y, 12.5, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#2f3643';
+        ctx.beginPath(); ctx.arc(x, y, 9.5, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        const dx = MM.DX[d], dy = MM.DY[d];
+        ctx.beginPath();
+        ctx.moveTo(x + dx * 5.5, y + dy * 5.5);
+        ctx.lineTo(x - dx * 2 - dy * 4, y - dy * 2 + dx * 4);
+        ctx.lineTo(x - dx * 2 + dy * 4, y - dy * 2 - dx * 4);
+        ctx.closePath();
+        ctx.fill();
+        void t;
+      }
 
       // ---- buildings
       for (const b of g.buildings) this.drawBuilding(ctx, b, g.time);
 
       // ---- placement hints
-      if ((this.tool === 'light' || this.tool === 'round') && g.state === 'running') {
+      if ((this.tool === 'light' || this.tool === 'round' || this.tool === 'ovp') && g.state === 'running') {
         const pulse = 0.5 + 0.5 * Math.sin(now / 220);
         ctx.lineWidth = 2.2;
         ctx.strokeStyle = `rgba(47,58,75,${0.35 + 0.35 * pulse})`;
         ctx.setLineDash([4, 4]);
+        const need = this.tool === 'ovp' ? 4 : 3;
         for (let n = 0; n < w.n; n++) {
-          if (w.bld[n] || w.feat[n] || w.deg(n) < 3) continue;
+          if (w.bld[n] || w.feat[n] || w.ringId[n] || w.deg(n) < need) continue;
           ctx.beginPath();
           ctx.arc(this.nodeX(n), this.nodeY(n), 17, 0, 6.2832);
           ctx.stroke();
         }
         ctx.setLineDash([]);
+      }
+      // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
+      if (this.tool === 'big' && this.hover >= 0 && g.state === 'running') {
+        const bad = g.checkBig(this.hover);
+        const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
+        ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : 'rgba(53,196,140,0.18)';
+        ctx.strokeStyle = bad ? 'rgba(235,60,70,0.7)' : 'rgba(30,150,100,0.8)';
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([6, 5]);
+        rr(ctx, x - 1.5 * C, y - 1.5 * C, 3 * C, 3 * C, 20);
+        ctx.fill(); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(x, y, 17, 0, 6.2832); ctx.stroke();
+      }
+      // tunnel being dragged out
+      if (this.preview && g.state === 'running') {
+        const pv = this.preview;
+        const ok = !pv.reason;
+        const col = ok ? '#1e9a64' : '#e03c46';
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([2, 9]);
+        ctx.beginPath(); ctx.moveTo(this.nodeX(pv.a), this.nodeY(pv.a)); ctx.lineTo(this.nodeX(pv.b), this.nodeY(pv.b)); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col;
+        for (const n of [pv.a, pv.b]) { ctx.beginPath(); ctx.arc(this.nodeX(n), this.nodeY(n), 7, 0, 6.2832); ctx.fill(); }
+        const len = Math.abs(g.world.col(pv.a) - g.world.col(pv.b)) + Math.abs(g.world.row(pv.a) - g.world.row(pv.b));
+        ctx.font = 'bold 13px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(len), (this.nodeX(pv.a) + this.nodeX(pv.b)) / 2, (this.nodeY(pv.a) + this.nodeY(pv.b)) / 2 - 12);
       }
       if (this.hover >= 0 && g.state === 'running') {
         const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
@@ -441,7 +612,7 @@
         }
         ctx.globalAlpha = 1;
       }
-      ctx.restore(); // clip
+      ctx.restore();
       ctx.restore();
     }
 

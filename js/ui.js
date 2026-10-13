@@ -9,6 +9,9 @@
   const DAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
+  const ALPHA_KEY = 'mmx_alpha_v1';
+  const ALPHAS = [0.25, 0.55, 0.85]; // translucent -> fairly solid
+  const C = MM.CFG.CELL;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -89,30 +92,56 @@
   // ---------------------------------------------------------------- layout
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = window.innerWidth, h = window.innerHeight;
-    const hud = $('hud').getBoundingClientRect();
-    const tb = $('toolbar').getBoundingClientRect();
-    renderer.insets.top = hud.bottom + 10;
-    renderer.insets.bottom = h - tb.top + 10;
-    renderer.insets.side = w < 640 ? 8 : 16;
-    renderer.resize(w, h, dpr);
+    renderer.resize(window.innerWidth, window.innerHeight, dpr);
+    refreshBlockRects();
+  }
+
+  // Keep new buildings out from under the on-screen controls (they float over the map).
+  let blockRects = [];
+  function refreshBlockRects() {
+    blockRects = [];
+    for (const el of document.querySelectorAll('.score-pill, .week-pill, .hud-btns, #toolbar')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0) blockRects.push([r.left - 14, r.top - 14, r.right + 14, r.bottom + 14]);
+    }
+  }
+  function makeBlockFn(cols, rows) {
+    return (n) => {
+      const v = renderer.viewFor(cols, rows);
+      const x = v.ox + ((n % cols) + 0.5) * C * v.scale;
+      const y = v.oy + (((n / cols) | 0) + 0.5) * C * v.scale;
+      for (const r of blockRects) if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) return true;
+      return false;
+    };
   }
 
   // ---------------------------------------------------------------- game lifecycle
   function newGame() {
     resize();
     const grid = renderer.suggestGrid();
-    ui.game = new MM.Game({ cols: grid.cols, rows: grid.rows });
+    const blockFn = makeBlockFn(grid.cols, grid.rows);
+    let game = null;
+    for (let attempt = 0; attempt < 12 && !game; attempt++) {
+      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows, blockFn }); } catch (e) { /* unlucky map, roll another */ }
+    }
+    ui.game = game || new MM.Game({ cols: 34, rows: 22 });
     ui.overShown = false;
     ui.overTimer = 0;
     renderer.setGame(ui.game);
     renderer.tool = ui.tool;
     stroke = null;
+    renderer.preview = null;
+    pointers.clear(); gesture = null; panning = null;
+    unlockedTools.clear();
+    hud.inv = '';
+    if (ui.tool !== 'road') setTool('road');
+    document.body.classList.remove('drawing');
   }
 
   // ---------------------------------------------------------------- modals
   const modal = $('modal'), card = $('card');
   function showModal(html) {
+    pointers.clear(); gesture = null; panning = null; // a stray finger must not leave a half-finished gesture behind
     card.innerHTML = html;
     modal.classList.remove('hidden');
   }
@@ -123,6 +152,9 @@
     round: '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="9.5" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="3" fill="#9fd3a8"/></svg>',
     bridge: '<svg viewBox="0 0 32 32" fill="none" stroke="#2f3a4b" stroke-width="2.4" stroke-linecap="round"><rect x="0" y="22" width="32" height="8" fill="#b7dcec" stroke="none"/><path d="M3 20h26M7 20v-6M25 20v-6M7 14c4 0 5 4 9 4s5-4 9-4"/></svg>',
     hw: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#f4ab45" stroke-width="6"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" stroke="#fff" stroke-width="1.4" stroke-dasharray="2.5 3"/></svg>',
+    ovp: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M3 21H29" stroke="#8e9bb0" stroke-width="6"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>',
+    tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
+    big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
   };
 
   function colorDots(n) {
@@ -139,9 +171,10 @@
       ${colorDots(6)}
       <ol class="tips">
         <li><b>拖曳</b>畫出道路,把房子連到<b>同顏色</b>的目的地。</li>
-        <li>目的地旁的<b>圓點</b>是等待中的車輛需求,太多就會被紅圈倒數,填滿即<b>遊戲結束</b>。</li>
+        <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿即<b>遊戲結束</b>。</li>
         <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
+        <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
       </ol>
       <button class="btn" id="mStart">開始遊戲</button>`);
     $('mStart').onclick = () => { sfx.unlock(); sfx.click(); hideModal(); ui.mode = 'play'; };
@@ -217,8 +250,23 @@
     b.addEventListener('click', () => { sfx.unlock(); sfx.click(); setTool(b.dataset.tool); });
   });
 
+  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big'];
   let stroke = null;
   let lastDeny = 0;
+  const DENY_TEXT = {
+    need3: '要放在三岔以上的路口',
+    need4: '高架要放在十字路口(四個方向都有路)',
+    none: '已經用完了,下週再挑選升級',
+    occupied: '這裡不能放置',
+    edge: '離地圖邊緣太近了',
+    blocked: '大圓環需要 3×3 的空地(不能有建築、水面或設施)',
+    line: '入口和出口要在同一條直線上',
+    short: '隧道至少要 2 格長',
+    long: '隧道最長 6 格',
+    portal: '隧道的入口與出口不能在水面或建築上',
+    busy: '入口朝隧道的那一側不能已經有道路',
+  };
+  function denyFor(reason) { if (DENY_TEXT[reason]) deny(DENY_TEXT[reason]); }
   function deny(msg) {
     const now = performance.now();
     if (now - lastDeny < 900) return;
@@ -248,7 +296,9 @@
   function applyStep(g, cur, next) {
     const w = g.world;
     if (stroke.tool === 'erase') {
-      if (g.removeEdge(cur, next).ok) sfx.erase();
+      const r = g.removeEdge(cur, next);
+      if (r.ok) sfx.erase();
+      else if (r.reason === 'ring') deny('圓環的路段不能單獨拆除,請點中央綠地');
       return;
     }
     // a stroke never continues *through* a building: it can only start or end on one
@@ -259,6 +309,17 @@
     else if (r.reason === 'nobridge') deny('橋樑不足!下週的升級可以獲得更多');
     else if (r.reason === 'nohw') deny('高速公路數量不足');
     else if (r.reason === 'hw-water') deny('高速公路不能建在水上');
+    else if (r.reason === 'island') deny('圓環中央是綠地,不能在這裡鋪路');
+    else if (r.reason === 'tunnel') deny('隧道入口的這一側不能鋪路');
+  }
+
+  // ---- camera: two fingers pan + pinch-zoom (touch), wheel zoom + middle-button drag (mouse)
+  const pointers = new Map(); // active pointers while playing: id -> {x, y} in CSS px
+  let gesture = null; // {x, y, d}: midpoint and distance of the two fingers at the last event
+  let panning = null; // middle-button drag: {id, x, y}
+  function twoFingers() {
+    const [a, b] = [...pointers.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
   }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -268,32 +329,71 @@
     if (ui.mode !== 'play' || g.state !== 'running') return;
     canvas.setPointerCapture(e.pointerId);
     const [px, py] = localPoint(e);
+    pointers.set(e.pointerId, { x: px, y: py });
+    if (pointers.size >= 2) {
+      // a second finger turns whatever was being drawn into a pan / zoom gesture
+      stroke = null;
+      renderer.preview = null;
+      document.body.classList.remove('drawing');
+      if (pointers.size === 2) gesture = { ...twoFingers(), d0: 0, z0: renderer.cam.zoom };
+      if (gesture) gesture.d0 = gesture.d;
+      return;
+    }
+    if (e.button === 1) { panning = { id: e.pointerId, x: px, y: py }; e.preventDefault(); return; }
     const n = renderer.pickNode(px, py);
     renderer.hover = n;
     const tool = e.button === 2 ? 'erase' : ui.tool;
     stroke = { tool, last: n, start: n, id: e.pointerId };
     if (n < 0) return;
-    if (tool === 'light' || tool === 'round') {
+    if (!CLICK_TOOLS.includes(tool)) document.body.classList.add('drawing');
+    if (tool === 'light' || tool === 'round' || tool === 'ovp') {
       const r = g.placeFeature(n, tool);
       if (r.ok) sfx.place();
-      else if (r.reason === 'need3') deny('要放在三岔以上的路口');
-      else if (r.reason === 'none') deny('已經用完了,下週再挑選升級');
-      else if (r.reason === 'occupied') deny('這裡不能放置');
+      else denyFor(r.reason);
       stroke = null;
+    } else if (tool === 'big') {
+      const r = g.placeBig(n);
+      if (r.ok) sfx.place();
+      else denyFor(r.reason);
+      stroke = null;
+    } else if (tool === 'tun') {
+      stroke.target = -1;
+      renderer.preview = null;
     } else if (tool === 'erase') {
-      if (g.removeFeature(n)) { sfx.erase(); }
+      const w = g.world;
+      // a click removes a placed feature, the whole big roundabout (click its green island) or a tunnel (click a portal)
+      if (g.removeFeature(n) || (w.island[n] && g.removeBigAt(n)) || g.removeTunnelAt(n, true)) sfx.erase();
     }
   });
 
   canvas.addEventListener('pointermove', (e) => {
     const g = ui.game;
     const [px, py] = localPoint(e);
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: px, y: py });
+    if (gesture && pointers.size >= 2) {
+      const now = twoFingers();
+      renderer.panBy(now.x - gesture.x, now.y - gesture.y);
+      // zoom is derived from the finger distance at the start of the gesture (not accumulated per event), because the two
+      // fingers' move events arrive one at a time and a clamped zoom would otherwise drift
+      if (gesture.d0 > 8 && now.d > 8) {
+        const target = Math.max(1, Math.min(3, gesture.z0 * now.d / gesture.d0));
+        renderer.zoomAt(now.x, now.y, target / renderer.cam.zoom);
+      }
+      gesture.x = now.x; gesture.y = now.y; gesture.d = now.d;
+      return;
+    }
+    if (panning && e.pointerId === panning.id) {
+      renderer.panBy(px - panning.x, py - panning.y);
+      panning.x = px; panning.y = py;
+      return;
+    }
     const n = renderer.pickNode(px, py);
     renderer.hover = e.pointerType === 'touch' && !stroke ? -1 : n;
     if (!stroke || e.pointerId !== stroke.id || ui.mode !== 'play' || g.state !== 'running') return;
+    if (stroke.tool === 'tun') { updateTunnelPreview(g, n); return; }
     if (n < 0 || n === stroke.last) return;
     if (stroke.last < 0) { stroke.last = n; stroke.start = n; return; }
-    if (stroke.tool === 'light' || stroke.tool === 'round') return;
+    if (CLICK_TOOLS.includes(stroke.tool)) return;
     let cur = stroke.last;
     let guard = g.cols + g.rows + 4;
     while (cur !== n && guard-- > 0) {
@@ -304,13 +404,48 @@
     stroke.last = n;
   });
 
+  // tunnel: drag from the entrance along a row / column; the exit snaps to 2-6 cells away
+  function updateTunnelPreview(g, p) {
+    const a = stroke.start;
+    if (a < 0 || p < 0) return;
+    const w = g.world;
+    const dc = w.col(p) - w.col(a), dr = w.row(p) - w.row(a);
+    let b = -1;
+    if (Math.abs(dc) >= Math.abs(dr) && dc !== 0) b = a + Math.sign(dc) * Math.min(Math.abs(dc), MM.CFG.TUNNEL_MAX);
+    else if (dr !== 0) b = a + Math.sign(dr) * Math.min(Math.abs(dr), MM.CFG.TUNNEL_MAX) * w.cols;
+    stroke.target = b;
+    renderer.preview = b < 0 ? null : { a, b, reason: g.checkTunnel(a, b) };
+  }
+
   const endStroke = (e) => {
-    if (stroke && e.pointerId === stroke.id) stroke = null;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) gesture = null;
+    if (panning && e.pointerId === panning.id) panning = null;
+    if (stroke && e.pointerId === stroke.id) {
+      if (stroke.tool === 'tun' && ui.game.state === 'running' && ui.mode === 'play') {
+        if (stroke.target >= 0) {
+          const r = ui.game.addTunnel(stroke.start, stroke.target);
+          if (r.ok) sfx.place(); else denyFor(r.reason);
+        } else if (stroke.start >= 0) {
+          deny('從入口拖曳到出口(同一直線,2–6 格)');
+        }
+      }
+      stroke = null;
+      renderer.preview = null;
+    }
+    document.body.classList.remove('drawing');
     if (e.pointerType === 'touch') renderer.hover = -1;
   };
   canvas.addEventListener('pointerup', endStroke);
   canvas.addEventListener('pointercancel', endStroke);
   canvas.addEventListener('pointerleave', () => { renderer.hover = -1; });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (ui.mode !== 'play') return;
+    const [px, py] = localPoint(e);
+    renderer.zoomAt(px, py, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+  }, { passive: false });
+  $('btnFit').onclick = () => { sfx.click(); renderer.resetCamera(); };
 
   // ---------------------------------------------------------------- buttons / keys
   function togglePause() {
@@ -333,21 +468,79 @@
     refreshSoundIcon();
     sfx.click();
   };
+  // translucent controls: cycle through three opacity levels
+  let alphaIdx = Math.max(0, Math.min(ALPHAS.length - 1, parseInt(store.get(ALPHA_KEY) || '1', 10) || 0));
+  function applyAlpha() { document.documentElement.style.setProperty('--ui-a', String(ALPHAS[alphaIdx])); }
+  applyAlpha();
+  $('btnAlpha').onclick = () => {
+    alphaIdx = (alphaIdx + 1) % ALPHAS.length;
+    store.set(ALPHA_KEY, String(alphaIdx));
+    applyAlpha();
+    toast('介面透明度:' + ['高(很透明)', '中', '低(較實)'][alphaIdx]);
+    sfx.click();
+  };
+
+  // fullscreen (+ landscape lock where the browser allows it)
+  const fsEl = document.documentElement;
+  const canFs = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
+  if (!canFs) $('btnFull').style.display = 'none';
+  $('btnFull').onclick = () => {
+    sfx.click();
+    const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (inFs) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+    const req = (fsEl.requestFullscreen || fsEl.webkitRequestFullscreen).call(fsEl);
+    Promise.resolve(req).then(() => {
+      try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* not supported */ }
+    }).catch(() => {});
+  };
+
   $('btnRestart').onclick = () => {
     if (ui.game.state === 'over' || ui.game.score < 5 || window.confirm('確定要重新開始嗎?')) restart();
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'erase' };
-    if (map[e.key] && ui.mode === 'play') setTool(map[e.key]);
+    const map = { 1: 'road', 2: 'hw', 3: 'light', 4: 'round', 5: 'big', 6: 'ovp', 7: 'tun', 8: 'erase' };
+    const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
+    if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
+    else if (e.key === '0') renderer.resetCamera();
+    else if (e.key.startsWith('Arrow') && renderer.isZoomed()) {
+      e.preventDefault();
+      const k = 70;
+      renderer.panBy(e.key === 'ArrowLeft' ? k : e.key === 'ArrowRight' ? -k : 0, e.key === 'ArrowUp' ? k : e.key === 'ArrowDown' ? -k : 0);
+    }
   });
-  window.addEventListener('resize', () => { resize(); });
-  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+  document.addEventListener('visibilitychange', () => { if (document.hidden && ui.mode === 'play') showPause(); });
+  let resizeTimer = 0;
+  function onResize() {
+    resize();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resize();
+      // before the first move the map can still be re-rolled to fit the new orientation; mid-game it stays put
+      if (ui.mode === 'start') newGame();
+      else ui.game.blockFn = makeBlockFn(ui.game.cols, ui.game.rows);
+      hintOrientation();
+    }, 150);
+  }
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+
+  let hinted = false;
+  function hintOrientation() {
+    if (hinted || window.innerHeight <= window.innerWidth || window.innerWidth > 700) return;
+    hinted = true;
+    toast('橫放手機,地圖更大更好玩');
+  }
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
+  const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'big', 'ovp', 'tun'];
+  const unlockedTools = new Set();
+  let fitShown = false;
   function updateHud(g) {
+    const z = renderer.isZoomed();
+    if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; refreshBlockRects(); }
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
     $('best').textContent = '最高 ' + best;
@@ -356,16 +549,19 @@
     if (hud.day !== d) { hud.day = d; $('dayName').textContent = '週' + DAYS[d]; }
     const f = Math.round((g.weekTime / MM.CFG.WEEK_SECONDS) * 1000) / 10;
     if (hud.fill !== f) { hud.fill = f; $('weekFill').style.width = f + '%'; }
-    const sig = `${g.inv.hw}|${g.inv.light}|${g.inv.round}|${g.inv.bridge}`;
+    const sig = OPTIONAL_TOOLS.map((k) => g.inv[k]).join('|') + '|' + g.inv.bridge;
     if (sig !== hud.inv) {
       hud.inv = sig;
-      $('cntHw').textContent = g.inv.hw;
-      $('cntLight').textContent = g.inv.light;
-      $('cntRound').textContent = g.inv.round;
       $('cntBridge').textContent = g.inv.bridge;
-      document.querySelector('[data-tool="hw"]').classList.toggle('empty', g.inv.hw <= 0);
-      document.querySelector('[data-tool="light"]').classList.toggle('empty', g.inv.light <= 0);
-      document.querySelector('[data-tool="round"]').classList.toggle('empty', g.inv.round <= 0);
+      for (const k of OPTIONAL_TOOLS) {
+        const btn = document.querySelector(`[data-tool="${k}"]`);
+        if (g.inv[k] > 0) unlockedTools.add(k); // a tool shows up the first time you own one
+        btn.classList.toggle('locked', !unlockedTools.has(k));
+        btn.classList.toggle('empty', g.inv[k] <= 0);
+        const badge = btn.querySelector('.badge');
+        if (badge) badge.textContent = g.inv[k];
+      }
+      refreshBlockRects(); // the toolbar grew / shrank
     }
   }
 
@@ -405,5 +601,6 @@
   refreshSoundIcon();
   newGame();
   showStart();
+  setTimeout(hintOrientation, 700);
   requestAnimationFrame(frame);
 })();
