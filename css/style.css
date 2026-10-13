@@ -1,13 +1,14 @@
 :root {
   --ink: #2f3a4b;
   --ink-soft: #5d687a;
-  --ui-a: 0.55; /* overlay opacity, changed by the transparency button */
+  --bar: #fffdf7; /* top bar / toolbar background */
+  --chip: rgba(47, 58, 75, 0.07);
   --accent: #4c8dff;
-  --shadow: 0 4px 14px rgba(40, 55, 45, 0.14);
-  --safe-l: max(10px, env(safe-area-inset-left));
-  --safe-r: max(10px, env(safe-area-inset-right));
-  --safe-t: max(8px, env(safe-area-inset-top));
-  --safe-b: max(8px, env(safe-area-inset-bottom));
+  --shadow: 0 2px 12px rgba(40, 55, 45, 0.14);
+  --safe-l: max(8px, env(safe-area-inset-left));
+  --safe-r: max(8px, env(safe-area-inset-right));
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -24,34 +25,24 @@ html, body {
   overscroll-behavior: none;
 }
 
-#app { position: fixed; inset: 0; }
+/* three stacked bands: top bar, map, toolbar -- the map never sits under a control */
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#stage { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
 #cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
 
-/* ---------- floating, translucent controls ---------- */
-.overlay {
-  background: rgba(255, 255, 255, var(--ui-a));
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  box-shadow: var(--shadow);
-  transition: opacity 0.2s, background 0.2s;
-}
-/* while a finger / mouse is drawing, get the controls out of the way */
-body.drawing .overlay { opacity: 0.28; }
-body.drawing .overlay, body.drawing #toast { pointer-events: none; }
-
-/* ---------- HUD ---------- */
+/* ---------- top bar ---------- */
 #hud {
-  position: absolute;
-  top: var(--safe-t);
-  left: var(--safe-l);
-  right: var(--safe-r);
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
   display: flex;
   align-items: stretch;
   gap: 8px;
-  pointer-events: none;
+  padding: calc(6px + var(--safe-t)) var(--safe-r) 6px var(--safe-l);
+  background: var(--bar);
+  box-shadow: var(--shadow);
 }
-#hud > * { pointer-events: auto; }
-.pill { border-radius: 14px; padding: 6px 12px; }
+.pill { border-radius: 14px; padding: 5px 12px; background: var(--chip); }
 .score-pill { display: flex; align-items: center; gap: 8px; min-width: 100px; }
 .score-num { font-size: 28px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; min-width: 32px; }
 .score-sub { display: flex; flex-direction: column; font-size: 11px; color: var(--ink-soft); line-height: 1.3; }
@@ -61,11 +52,12 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 .week-bar { height: 6px; border-radius: 99px; background: rgba(47, 58, 75, 0.14); overflow: hidden; }
 .week-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #4c8dff, #35c48c); }
 
-.hud-btns { margin-left: auto; display: flex; gap: 6px; align-items: center; background: none; }
+.hud-btns { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .icon-btn {
-  width: 40px; height: 40px;
+  width: 38px; height: 38px;
   border: 0;
   border-radius: 12px;
+  background: var(--chip);
   color: var(--ink);
   display: grid; place-items: center;
   cursor: pointer;
@@ -77,25 +69,29 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 .icon-btn svg .fill { fill: currentColor; stroke: none; }
 .icon-btn.off { color: #8f98a6; }
 
-/* ---------- toolbar (bottom centre on big screens) ---------- */
+/* ---------- toolbar (bottom bar) ---------- */
 #toolbar {
-  position: absolute;
-  left: 50%;
-  bottom: var(--safe-b);
-  transform: translateX(-50%);
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
   display: flex;
+  justify-content: center;
   gap: 6px;
-  padding: 6px;
-  border-radius: 20px;
-  max-width: calc(100vw - 16px);
+  padding: 6px var(--safe-r) calc(6px + var(--safe-b)) var(--safe-l);
+  background: var(--bar);
+  box-shadow: 0 -2px 12px rgba(40, 55, 45, 0.12);
+  overflow-x: auto; /* many tools on a narrow screen: scroll sideways instead of growing taller */
+  scrollbar-width: none;
 }
+#toolbar::-webkit-scrollbar { display: none; }
 .tool {
   position: relative;
   width: 62px; height: 58px;
   border: 2px solid transparent;
   border-radius: 14px;
-  background: rgba(47, 58, 75, 0.06);
+  background: var(--chip);
   color: var(--ink);
+  flex: 0 0 auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   cursor: pointer;
   font: 600 11px system-ui, "Noto Sans TC", sans-serif;
@@ -103,7 +99,7 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
   transition: transform 0.08s, background 0.15s;
 }
 .tool:active { transform: scale(0.94); }
-.tool.active { background: rgba(255, 255, 255, 0.92); border-color: var(--ink); box-shadow: 0 3px 10px rgba(40, 55, 45, 0.18); }
+.tool.active { background: #fff; border-color: var(--ink); box-shadow: 0 3px 10px rgba(40, 55, 45, 0.18); }
 .tool.empty { opacity: 0.4; }
 .tool.locked { display: none; }
 .tool svg { width: 28px; height: 28px; fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
@@ -125,6 +121,7 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 }
 .chip {
   align-self: center;
+  flex: 0 0 auto;
   display: flex; align-items: center; gap: 4px;
   padding: 0 10px 0 6px; height: 42px;
   border-radius: 13px;
@@ -139,7 +136,7 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 #toast {
   position: absolute;
   left: 50%;
-  top: calc(var(--safe-t) + 56px);
+  top: 10px;
   transform: translate(-50%, -10px);
   background: rgba(47, 58, 75, 0.88);
   color: #fff;
@@ -219,26 +216,25 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
 /* ---------- portrait phones ---------- */
 @media (max-width: 640px) and (orientation: portrait) {
   #hud { flex-wrap: wrap; gap: 6px; }
-  .pill { padding: 5px 10px; }
+  .pill { padding: 4px 10px; }
   .score-num { font-size: 24px; }
   .week-pill { flex: 1 1 110px; }
   .hud-btns { gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
   .icon-btn { width: 36px; height: 36px; border-radius: 11px; }
-  .tool { width: 50px; height: 52px; font-size: 10px; }
-  .tool svg { width: 24px; height: 24px; }
-  #toolbar { gap: 4px; padding: 5px; }
+  .tool { flex: 1 1 0; width: auto; min-width: 34px; max-width: 54px; height: 50px; font-size: 9px; }
+  .tool svg { width: 22px; height: 22px; }
+  #toolbar { gap: 3px; justify-content: center; padding-left: 6px; padding-right: 6px; }
   .chip { padding: 0 6px 0 2px; height: 38px; font-size: 14px; }
   .choices { grid-template-columns: 1fr; }
   .choice { display: grid; grid-template-columns: 54px 1fr; text-align: left; gap: 2px 12px; padding: 10px; align-items: center; }
   .choice .ico { grid-row: span 3; margin: 0; }
   .card { padding: 18px 14px 14px; }
-  #toast { top: calc(var(--safe-t) + 100px); }
 }
 
-/* ---------- phones held sideways (the default target): compact HUD, tool column on the left ---------- */
+/* ---------- phones held sideways (the default target): slim bars so the map keeps as much height as possible ---------- */
 @media (orientation: landscape) and (max-height: 560px) {
-  #hud { gap: 6px; }
-  .pill { padding: 4px 10px; border-radius: 12px; }
+  #hud { gap: 6px; padding-top: calc(4px + var(--safe-t)); padding-bottom: 4px; }
+  .pill { padding: 3px 10px; border-radius: 12px; }
   .score-pill { min-width: 88px; gap: 6px; }
   .score-num { font-size: 22px; min-width: 26px; }
   .score-sub { font-size: 10px; }
@@ -246,30 +242,18 @@ body.drawing .overlay, body.drawing #toast { pointer-events: none; }
   .week-top { font-size: 12px; }
   .week-bar { height: 5px; }
   .hud-btns { gap: 5px; }
-  .icon-btn { width: 36px; height: 36px; border-radius: 11px; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 10px; }
   .icon-btn svg { width: 18px; height: 18px; }
 
-  #toolbar {
-    left: var(--safe-l);
-    bottom: auto;
-    top: 50%;
-    transform: translateY(-46%);
-    flex-flow: column wrap;
-    max-height: calc(100vh - var(--safe-t) - var(--safe-b) - 56px); /* more tools than fit -> a second column */
-    align-content: flex-start;
-    gap: 4px;
-    padding: 5px;
-    border-radius: 18px;
-    max-width: none;
-  }
-  .tool { width: 42px; height: 42px; border-radius: 12px; }
+  #toolbar { gap: 5px; padding-top: 4px; padding-bottom: calc(4px + var(--safe-b)); }
+  .tool { width: 44px; height: 40px; border-radius: 11px; }
   .tool span { display: none; }
   .tool svg { width: 24px; height: 24px; }
   .badge { top: -3px; right: -3px; min-width: 16px; height: 16px; font-size: 10px; line-height: 16px; padding: 0 4px; }
-  .chip { height: 36px; padding: 0 6px 0 3px; font-size: 14px; justify-content: center; }
+  .chip { height: 36px; padding: 0 8px 0 4px; font-size: 14px; }
   .chip svg { width: 22px; height: 22px; }
 
-  #toast { top: calc(var(--safe-t) + 46px); }
+  #toast { top: 8px; }
   #modal { padding: 8px; }
   .card { padding: 12px 18px 12px; border-radius: 20px; }
   .card h1 { font-size: 24px; }

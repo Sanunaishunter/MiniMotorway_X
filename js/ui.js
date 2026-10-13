@@ -4,13 +4,12 @@
   const MM = window.MM;
   const $ = (id) => document.getElementById(id);
   const canvas = $('cv');
+  const stage = $('stage'); // the map area between the top bar and the toolbar
   const renderer = new MM.Renderer(canvas);
 
   const DAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
-  const ALPHA_KEY = 'mmx_alpha_v1';
-  const ALPHAS = [0.25, 0.55, 0.85]; // translucent -> fairly solid
   const C = MM.CFG.CELL;
 
   const store = {
@@ -92,37 +91,23 @@
   // ---------------------------------------------------------------- layout
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    renderer.resize(window.innerWidth, window.innerHeight, dpr);
-    refreshBlockRects();
+    const r = stage.getBoundingClientRect();
+    renderer.resize(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)), dpr);
   }
 
-  // Keep new buildings out from under the on-screen controls (they float over the map).
-  let blockRects = [];
-  function refreshBlockRects() {
-    blockRects = [];
-    for (const el of document.querySelectorAll('.score-pill, .week-pill, .hud-btns, #toolbar')) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0) blockRects.push([r.left - 14, r.top - 14, r.right + 14, r.bottom + 14]);
-    }
-  }
-  function makeBlockFn(cols, rows) {
-    return (n) => {
-      const v = renderer.viewFor(cols, rows);
-      const x = v.ox + ((n % cols) + 0.5) * C * v.scale;
-      const y = v.oy + (((n / cols) | 0) + 0.5) * C * v.scale;
-      for (const r of blockRects) if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) return true;
-      return false;
-    };
-  }
+  /** Page coordinates of a node's centre (handy for tests / debugging). */
+  ui.nodeToPage = (n) => {
+    const r = canvas.getBoundingClientRect(), v = renderer.view, g = ui.game;
+    return [r.left + v.ox + ((n % g.cols) + 0.5) * C * v.scale, r.top + v.oy + (((n / g.cols) | 0) + 0.5) * C * v.scale];
+  };
 
   // ---------------------------------------------------------------- game lifecycle
   function newGame() {
     resize();
     const grid = renderer.suggestGrid();
-    const blockFn = makeBlockFn(grid.cols, grid.rows);
     let game = null;
     for (let attempt = 0; attempt < 12 && !game; attempt++) {
-      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows, blockFn }); } catch (e) { /* unlucky map, roll another */ }
+      try { game = new MM.Game({ cols: grid.cols, rows: grid.rows }); } catch (e) { /* unlucky map, roll another */ }
     }
     ui.game = game || new MM.Game({ cols: 34, rows: 22 });
     ui.overShown = false;
@@ -135,7 +120,6 @@
     unlockedTools.clear();
     hud.inv = '';
     if (ui.tool !== 'road') setTool('road');
-    document.body.classList.remove('drawing');
   }
 
   // ---------------------------------------------------------------- modals
@@ -334,7 +318,6 @@
       // a second finger turns whatever was being drawn into a pan / zoom gesture
       stroke = null;
       renderer.preview = null;
-      document.body.classList.remove('drawing');
       if (pointers.size === 2) gesture = { ...twoFingers(), d0: 0, z0: renderer.cam.zoom };
       if (gesture) gesture.d0 = gesture.d;
       return;
@@ -345,7 +328,6 @@
     const tool = e.button === 2 ? 'erase' : ui.tool;
     stroke = { tool, last: n, start: n, id: e.pointerId };
     if (n < 0) return;
-    if (!CLICK_TOOLS.includes(tool)) document.body.classList.add('drawing');
     if (tool === 'light' || tool === 'round' || tool === 'ovp') {
       const r = g.placeFeature(n, tool);
       if (r.ok) sfx.place();
@@ -433,7 +415,6 @@
       stroke = null;
       renderer.preview = null;
     }
-    document.body.classList.remove('drawing');
     if (e.pointerType === 'touch') renderer.hover = -1;
   };
   canvas.addEventListener('pointerup', endStroke);
@@ -468,18 +449,6 @@
     refreshSoundIcon();
     sfx.click();
   };
-  // translucent controls: cycle through three opacity levels
-  let alphaIdx = Math.max(0, Math.min(ALPHAS.length - 1, parseInt(store.get(ALPHA_KEY) || '1', 10) || 0));
-  function applyAlpha() { document.documentElement.style.setProperty('--ui-a', String(ALPHAS[alphaIdx])); }
-  applyAlpha();
-  $('btnAlpha').onclick = () => {
-    alphaIdx = (alphaIdx + 1) % ALPHAS.length;
-    store.set(ALPHA_KEY, String(alphaIdx));
-    applyAlpha();
-    toast('介面透明度:' + ['高(很透明)', '中', '低(較實)'][alphaIdx]);
-    sfx.click();
-  };
-
   // fullscreen (+ landscape lock where the browser allows it)
   const fsEl = document.documentElement;
   const canFs = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
@@ -519,11 +488,11 @@
       resize();
       // before the first move the map can still be re-rolled to fit the new orientation; mid-game it stays put
       if (ui.mode === 'start') newGame();
-      else ui.game.blockFn = makeBlockFn(ui.game.cols, ui.game.rows);
       hintOrientation();
     }, 150);
   }
-  window.addEventListener('resize', onResize);
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe(stage);
+  else window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', onResize);
 
   let hinted = false;
@@ -540,7 +509,7 @@
   let fitShown = false;
   function updateHud(g) {
     const z = renderer.isZoomed();
-    if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; refreshBlockRects(); }
+    if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; }
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
     $('best').textContent = '最高 ' + best;
@@ -561,7 +530,6 @@
         const badge = btn.querySelector('.badge');
         if (badge) badge.textContent = g.inv[k];
       }
-      refreshBlockRects(); // the toolbar grew / shrank
     }
   }
 
