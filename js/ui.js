@@ -131,6 +131,7 @@
     renderer.tool = ui.tool;
     stroke = null;
     renderer.preview = null;
+    pointers.clear(); gesture = null; panning = null;
     unlockedTools.clear();
     hud.inv = '';
     if (ui.tool !== 'road') setTool('road');
@@ -140,6 +141,7 @@
   // ---------------------------------------------------------------- modals
   const modal = $('modal'), card = $('card');
   function showModal(html) {
+    pointers.clear(); gesture = null; panning = null; // a stray finger must not leave a half-finished gesture behind
     card.innerHTML = html;
     modal.classList.remove('hidden');
   }
@@ -311,6 +313,15 @@
     else if (r.reason === 'tunnel') deny('隧道入口的這一側不能鋪路');
   }
 
+  // ---- camera: two fingers pan + pinch-zoom (touch), wheel zoom + middle-button drag (mouse)
+  const pointers = new Map(); // active pointers while playing: id -> {x, y} in CSS px
+  let gesture = null; // {x, y, d}: midpoint and distance of the two fingers at the last event
+  let panning = null; // middle-button drag: {id, x, y}
+  function twoFingers() {
+    const [a, b] = [...pointers.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+  }
+
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
     sfx.unlock();
@@ -318,6 +329,17 @@
     if (ui.mode !== 'play' || g.state !== 'running') return;
     canvas.setPointerCapture(e.pointerId);
     const [px, py] = localPoint(e);
+    pointers.set(e.pointerId, { x: px, y: py });
+    if (pointers.size >= 2) {
+      // a second finger turns whatever was being drawn into a pan / zoom gesture
+      stroke = null;
+      renderer.preview = null;
+      document.body.classList.remove('drawing');
+      if (pointers.size === 2) gesture = { ...twoFingers(), d0: 0, z0: renderer.cam.zoom };
+      if (gesture) gesture.d0 = gesture.d;
+      return;
+    }
+    if (e.button === 1) { panning = { id: e.pointerId, x: px, y: py }; e.preventDefault(); return; }
     const n = renderer.pickNode(px, py);
     renderer.hover = n;
     const tool = e.button === 2 ? 'erase' : ui.tool;
@@ -347,6 +369,24 @@
   canvas.addEventListener('pointermove', (e) => {
     const g = ui.game;
     const [px, py] = localPoint(e);
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: px, y: py });
+    if (gesture && pointers.size >= 2) {
+      const now = twoFingers();
+      renderer.panBy(now.x - gesture.x, now.y - gesture.y);
+      // zoom is derived from the finger distance at the start of the gesture (not accumulated per event), because the two
+      // fingers' move events arrive one at a time and a clamped zoom would otherwise drift
+      if (gesture.d0 > 8 && now.d > 8) {
+        const target = Math.max(1, Math.min(3, gesture.z0 * now.d / gesture.d0));
+        renderer.zoomAt(now.x, now.y, target / renderer.cam.zoom);
+      }
+      gesture.x = now.x; gesture.y = now.y; gesture.d = now.d;
+      return;
+    }
+    if (panning && e.pointerId === panning.id) {
+      renderer.panBy(px - panning.x, py - panning.y);
+      panning.x = px; panning.y = py;
+      return;
+    }
     const n = renderer.pickNode(px, py);
     renderer.hover = e.pointerType === 'touch' && !stroke ? -1 : n;
     if (!stroke || e.pointerId !== stroke.id || ui.mode !== 'play' || g.state !== 'running') return;
@@ -378,6 +418,9 @@
   }
 
   const endStroke = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) gesture = null;
+    if (panning && e.pointerId === panning.id) panning = null;
     if (stroke && e.pointerId === stroke.id) {
       if (stroke.tool === 'tun' && ui.game.state === 'running' && ui.mode === 'play') {
         if (stroke.target >= 0) {
@@ -396,6 +439,13 @@
   canvas.addEventListener('pointerup', endStroke);
   canvas.addEventListener('pointercancel', endStroke);
   canvas.addEventListener('pointerleave', () => { renderer.hover = -1; });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (ui.mode !== 'play') return;
+    const [px, py] = localPoint(e);
+    renderer.zoomAt(px, py, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+  }, { passive: false });
+  $('btnFit').onclick = () => { sfx.click(); renderer.resetCamera(); };
 
   // ---------------------------------------------------------------- buttons / keys
   function togglePause() {
@@ -453,6 +503,12 @@
     const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
+    else if (e.key === '0') renderer.resetCamera();
+    else if (e.key.startsWith('Arrow') && renderer.isZoomed()) {
+      e.preventDefault();
+      const k = 70;
+      renderer.panBy(e.key === 'ArrowLeft' ? k : e.key === 'ArrowRight' ? -k : 0, e.key === 'ArrowUp' ? k : e.key === 'ArrowDown' ? -k : 0);
+    }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && ui.mode === 'play') showPause(); });
   let resizeTimer = 0;
@@ -481,7 +537,10 @@
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
   const OPTIONAL_TOOLS = ['hw', 'light', 'round', 'big', 'ovp', 'tun'];
   const unlockedTools = new Set();
+  let fitShown = false;
   function updateHud(g) {
+    const z = renderer.isZoomed();
+    if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; refreshBlockRects(); }
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
     $('best').textContent = '最高 ' + best;

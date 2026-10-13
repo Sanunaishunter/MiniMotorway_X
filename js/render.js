@@ -19,6 +19,7 @@
     ink: '#2f3a4b',
   };
 
+  const MAX_ZOOM = 3;
   const OFF = 4.0; // lane offset from the road centre line
   const lerp = (a, b, t) => a + (b - a) * t;
   const easeOutBack = (t) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
@@ -43,6 +44,7 @@
       this.hover = -1;
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
+      this.cam = { zoom: 1, cx: 0, cy: 0 }; // camera: zoom >= 1 (1 = whole map fits), cx/cy = world point at the screen centre
       this.statics = null;
       this._pose = { x: 0, y: 0, a: 0 };
     }
@@ -51,7 +53,7 @@
       this.game = game;
       this.fx = [];
       this.statics = null;
-      this.layout();
+      this.resetCamera();
     }
 
     resize(w, h, dpr) {
@@ -81,9 +83,47 @@
     layout() {
       const g = this.game, v = this.view;
       if (!g) return;
-      const f = this.viewFor(g.cols, g.rows);
-      v.scale = f.scale; v.ox = f.ox; v.oy = f.oy;
+      const fit = this.viewFor(g.cols, g.rows).scale;
+      const cam = this.cam;
+      const scale = fit * cam.zoom;
+      // keep the map covering the screen (or centred where it is smaller than the screen)
+      const bw = g.cols * C, bh = g.rows * C;
+      const hw = v.w / 2 / scale, hh = v.h / 2 / scale;
+      cam.cx = bw * scale <= v.w ? bw / 2 : Math.max(hw, Math.min(bw - hw, cam.cx));
+      cam.cy = bh * scale <= v.h ? bh / 2 : Math.max(hh, Math.min(bh - hh, cam.cy));
+      v.scale = scale;
+      v.ox = v.w / 2 - cam.cx * scale;
+      v.oy = v.h / 2 - cam.cy * scale;
       this.statics = null;
+    }
+
+    resetCamera() {
+      const g = this.game;
+      this.cam.zoom = 1;
+      if (g) { this.cam.cx = g.cols * C / 2; this.cam.cy = g.rows * C / 2; }
+      this.layout();
+    }
+
+    isZoomed() { return this.cam.zoom > 1.001; }
+
+    /** Pan by (dx, dy) screen pixels (the map follows the fingers). */
+    panBy(dx, dy) {
+      this.cam.cx -= dx / this.view.scale;
+      this.cam.cy -= dy / this.view.scale;
+      this.layout();
+    }
+
+    /** Zoom by `factor`, keeping the map point under screen position (px, py) fixed. */
+    zoomAt(px, py, factor) {
+      const v = this.view, cam = this.cam;
+      const fit = v.scale / cam.zoom;
+      const wx = (px - v.ox) / v.scale, wy = (py - v.oy) / v.scale;
+      cam.zoom = Math.max(1, Math.min(MAX_ZOOM, cam.zoom * factor));
+      const scale = fit * cam.zoom;
+      // after zooming, the map point (wx, wy) must still sit under (px, py):  ox' = px - wx*scale = w/2 - cx'*scale
+      cam.cx = wx + (v.w / 2 - px) / scale;
+      cam.cy = wy + (v.h / 2 - py) / scale;
+      this.layout();
     }
 
     nodeX(n) { return ((n % this.game.cols) + 0.5) * C; }
