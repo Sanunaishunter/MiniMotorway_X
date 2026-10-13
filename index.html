@@ -14,43 +14,43 @@
 </head>
 <body>
   <div id="app">
-    <canvas id="cv"></canvas>
-
     <header id="hud">
-      <div class="pill overlay score-pill">
+      <div class="pill score-pill">
         <div class="score-num" id="score">0</div>
         <div class="score-sub"><span>送達</span><span id="best">最高 0</span></div>
       </div>
 
-      <div class="pill overlay week-pill">
+      <div class="pill week-pill">
         <div class="week-top"><b id="weekName">第 1 週</b><span id="dayName">週一</span></div>
         <div class="week-bar"><i id="weekFill"></i></div>
       </div>
 
       <div class="hud-btns">
-        <button class="icon-btn overlay" id="btnFit" title="回到完整地圖 (0)" aria-label="回到完整地圖" style="display:none">
+        <button class="icon-btn" id="btnFit" title="回到完整地圖 (0)" aria-label="回到完整地圖" style="display:none">
           <svg viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/><circle cx="12" cy="12" r="2.2" class="fill"/></svg>
         </button>
-        <button class="icon-btn overlay" id="btnPause" title="暫停 (空白鍵)" aria-label="暫停">
+        <button class="icon-btn" id="btnPause" title="暫停 (空白鍵)" aria-label="暫停">
           <svg viewBox="0 0 24 24"><path id="pauseIcon" d="M8 5v14M16 5v14"/></svg>
         </button>
-        <button class="icon-btn txt overlay" id="btnSpeed" title="遊戲速度" aria-label="速度">1×</button>
-        <button class="icon-btn overlay" id="btnAlpha" title="介面透明度" aria-label="介面透明度">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg>
-        </button>
-        <button class="icon-btn overlay" id="btnFull" title="全螢幕" aria-label="全螢幕">
+        <button class="icon-btn txt" id="btnSpeed" title="遊戲速度" aria-label="速度">1×</button>
+        <button class="icon-btn" id="btnFull" title="全螢幕" aria-label="全螢幕">
           <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
         </button>
-        <button class="icon-btn overlay" id="btnSound" title="音效" aria-label="音效">
+        <button class="icon-btn" id="btnSound" title="音效" aria-label="音效">
           <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z" class="fill"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
         </button>
-        <button class="icon-btn overlay" id="btnRestart" title="重新開始" aria-label="重新開始">
+        <button class="icon-btn" id="btnRestart" title="重新開始" aria-label="重新開始">
           <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
         </button>
       </div>
     </header>
 
-    <nav id="toolbar" class="overlay">
+    <main id="stage">
+      <canvas id="cv"></canvas>
+      <div id="toast"></div>
+    </main>
+
+    <nav id="toolbar">
       <button class="tool active" data-tool="road" title="道路 (1)">
         <svg viewBox="0 0 32 32"><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="stroke-thick g"/><path d="M5 26C5 14 14 20 16 14S22 6 27 6" class="dash"/></svg>
         <span>道路</span>
@@ -88,8 +88,6 @@
         <b id="cntBridge">0</b>
       </div>
     </nav>
-
-    <div id="toast"></div>
 
     <div id="modal" class="hidden">
       <div class="card" id="card"></div>
