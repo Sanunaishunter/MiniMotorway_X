@@ -32,7 +32,7 @@
   };
 
   // sprite sizes in world units; the anchor (trunk base) sits 6 units above the bottom
-  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20], birch: [30, 46], pine: [40, 46], rock: [28, 18] };
+  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20], birch: [30, 46], pine: [40, 46], rock: [28, 18], torii: [36, 34] };
   const smooth = (t) => t * t * (3 - 2 * t);
   const mod = (a, b) => ((a % b) + b) % b;
 
@@ -76,11 +76,43 @@
       const isWater = (c, r) => w.water[Math.max(0, Math.min(rows - 1, r)) * cols + Math.max(0, Math.min(cols - 1, c))] === 1;
       this.isWaterAt = (x, y) => isWater(Math.floor(x / C), Math.floor(y / C));
 
+      // ---- Edo shore (beach map): flagstone paving (石畳) in patches on land away from the water, and Mt. Fuji on the horizon
+      const slabCells = new Set();
+      this.slabs = null; this.fuji = null; const toriiAt = [];
+      if (this.theme === 'beach') {
+        const flag = field(5);
+        const near = (c, r) => { for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (isWater(c + dc, r + dr)) return true; return false; };
+        const gaps = new Path2D(), tones = [new Path2D(), new Path2D(), new Path2D()];
+        const box = (path, X, Y, W, H) => { if (path.roundRect) path.roundRect(X, Y, W, H, 2.2); else path.rect(X, Y, W, H); };
+        for (let r = 1; r < rows - 1; r++) {
+          for (let c = 1; c < cols - 1; c++) {
+            if (flag(c, r) < 0.74 || near(c, r)) continue;
+            slabCells.add(r * cols + c);
+            if (toriiAt.length < 3 && rnd() < 0.05) toriiAt.push([c, r]);
+            gaps.rect(c * C, r * C, C, C);
+            // three courses of stone, every other course shifted by half a slab
+            for (let k = 0; k < 3; k++) {
+              const y = r * C + (k * C) / 3, h = C / 3;
+              const cuts = k % 2 ? [0, 0.25, 0.75, 1] : [0, 0.5, 1];
+              for (let i = 0; i + 1 < cuts.length; i++) box(tones[Math.floor(rnd() * 3)], c * C + cuts[i] * C + 0.9, y + 0.9, (cuts[i + 1] - cuts[i]) * C - 1.8, h - 1.8);
+            }
+          }
+        }
+        if (slabCells.size) this.slabs = { gaps, tones };
+        // Mt. Fuji: a big backdrop on dry land near the top edge, clear of the water
+        const clear = (c, r) => { for (let dr = -2; dr <= 2; dr++) for (let dc = -3; dc <= 3; dc++) if (isWater(c + dc, r + dr)) return false; return true; };
+        const cs = [];
+        for (let c = Math.floor(cols * 0.25); c <= Math.floor(cols * 0.75); c++) for (let r = 5; r <= Math.min(8, rows - 3); r++) if (clear(c, r)) cs.push([c, r]);
+        if (cs.length) { const [c, r] = cs[Math.floor(rnd() * cs.length)]; this.fuji = { x: (c + 0.5) * C, y: (r + 0.5) * C, w: 6.4 * C, h: 3.8 * C }; }
+      }
+      this.slabCells = slabCells;
+
       // ---- trees: up to one per quarter of every land cell (so they never sit on a road centre line)
       this.trees = [];
       for (let r = -1; r <= rows; r++) {
         for (let c = -1; c <= cols; c++) {
           if (isWater(c, r)) continue;
+          if (slabCells.has(r * cols + c)) continue; // nothing grows through the paving
           const inBoard = c >= 0 && r >= 0 && c < cols && r < rows;
           const dd = sample(dens, c, r);
           const beach = this.theme === 'beach';
@@ -95,9 +127,10 @@
               const grove = sample(sak, c, r) > 0.68;
               let kind = 'round', variant = Math.floor(rnd() * PAL.round.length), size = 0.85 + rnd() * 0.3;
               if (beach) { // black pines (黒松), dune shrubs and sea-worn rocks
-                if (kindRoll < 0.55) { kind = 'pine'; size = 0.9 + rnd() * 0.3; }
+                if (kindRoll < 0.62) { kind = 'pine'; size = 0.9 + rnd() * 0.3; }
                 else if (kindRoll < 0.8) { kind = 'bush'; size = 0.8 + rnd() * 0.3; }
-                else { kind = 'rock'; size = 0.8 + rnd() * 0.5; }
+                else if (kindRoll < 0.985) { kind = 'rock'; size = 0.8 + rnd() * 0.5; }
+                else { kind = 'torii'; size = 0.95 + rnd() * 0.25; } // a shrine gate
               } else if (snowy) { // snowfield: mostly snow-laden evergreens, a few bare-ish round trees and snow mounds
                 if (kindRoll < 0.6) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
                 else if (kindRoll < 0.74) kind = 'round';
@@ -114,6 +147,11 @@
             }
           }
         }
+      }
+      for (const [c, r] of toriiAt) this.trees.push({ x: (c + 0.5) * C, y: (r + 0.5) * C + 14, kind: 'torii', variant: 0, s: 1.05, ph: 0, snow: false, cell: -1 });
+      if (this.fuji) { // the mountain's foot is bare: no trees on the lower slopes
+        const f = this.fuji;
+        this.trees = this.trees.filter((t) => !(Math.abs(t.x - f.x) < f.w * 0.5 && t.y > f.y - f.h * 0.35 && t.y < f.y + f.h * 0.12));
       }
       this.trees.sort((a, b) => a.y - b.y);
 
@@ -227,6 +265,10 @@
         for (const rp of this.ripples) for (let k = 0; k < rp.n; k++) { const y = rp.y + k * 3.2, x = rp.x + k * 2; ctx.moveTo(x, y); ctx.bezierCurveTo(x + rp.l * 0.3, y - 2.2, x + rp.l * 0.65, y + 2.2, x + rp.l, y); }
         ctx.stroke();
       }
+      if (beach && this.slabs) { // flagstones: grey-beige slabs of three tones over dark joints
+        ctx.fillStyle = '#8f8873'; ctx.fill(this.slabs.gaps);
+        ['#cfc8b6', '#c2baa6', '#d9d3c3'].forEach((col, i) => { ctx.fillStyle = col; ctx.fill(this.slabs.tones[i]); });
+      }
       ctx.strokeStyle = beach ? PAL.sand.tuft : whole ? 'rgba(120,150,185,0.45)' : PAL.tuft; // (tufts of grass poking out of the snow / dune grass)
       ctx.lineWidth = 1.1;
       ctx.lineCap = 'round';
@@ -330,6 +372,13 @@
           c.strokeStyle = ink; c.lineWidth = 1; c.stroke();
         };
         tuft(bx - 9, by - 12, 8.5, 4.4); tuft(bx + 9, by - 17, 8.5, 4.4); tuft(bx, by - 25, 11.5, 5.4);
+      } else if (kind === 'torii') { // 鳥居: vermilion pillars, a black-capped lintel and a tie beam
+        c.lineJoin = 'round'; c.strokeStyle = '#3a1f1a'; c.lineWidth = 1;
+        const blk = (x, y, w, h, col) => { c.fillStyle = col; c.fillRect(bx + x, by + y, w, h); c.strokeRect(bx + x, by + y, w, h); };
+        blk(-12, -28, 3.6, 29, '#d8432e'); blk(8.4, -28, 3.6, 29, '#d8432e'); // pillars
+        blk(-10, -21, 20, 2.8, '#d8432e'); // nuki
+        c.beginPath(); c.moveTo(bx - 16, by - 33); c.lineTo(bx + 16, by - 33); c.lineTo(bx + 13, by - 28.5); c.lineTo(bx - 13, by - 28.5); c.closePath(); c.fillStyle = '#d8432e'; c.fill(); c.stroke();
+        c.fillStyle = '#2b2a2c'; c.beginPath(); c.moveTo(bx - 17, by - 34); c.lineTo(bx + 17, by - 34); c.lineTo(bx + 16, by - 31.5); c.lineTo(bx - 16, by - 31.5); c.closePath(); c.fill(); // black cap on the lintel
       } else if (kind === 'rock') { // a sea-worn rock: blue-grey with a keyline and a pale highlight
         const poly = [[-11, 5], [-9, -3], [-3, -8], [4, -7], [10, -1], [12, 5]];
         c.beginPath(); poly.forEach(([dx, dy], i) => (i ? c.lineTo(bx + dx, by + dy) : c.moveTo(bx + dx, by + dy))); c.closePath();
@@ -376,8 +425,54 @@
       if (this.theme === 'beach') this.drawSea(ctx, v, t, x0, x1, y0, y1);
       else this.drawIce(ctx, t, x0, x1, y0, y1);
 
+      if (this.fuji) this.drawFuji(ctx, t, x0, x1, y0, y1);
       // ---- trees (sorted by y, drawn back to front); the wind only moves them when zoomed in (fully from 1.5x)
       this.drawTrees(ctx, v, t, world, zoom, x0, x1, y0, y1);
+    }
+
+    /** Mt. Fuji (富士山) as a woodblock print: a blue cone shading to pink at the foot, a white cap with a jagged edge, mist bands across the base. */
+    drawFuji(ctx, t, x0, x1, y0, y1) {
+      const f = this.fuji;
+      if (f.x + f.w / 2 < x0 || f.x - f.w / 2 > x1 || f.y + f.h * 0.2 < y0 || f.y - f.h > y1) return;
+      const L = f.x - f.w / 2, R = f.x + f.w / 2, top = f.y - f.h, base = f.y;
+      const cone = () => { // a gently concave silhouette, flat summit
+        ctx.beginPath();
+        ctx.moveTo(L, base);
+        ctx.bezierCurveTo(L + f.w * 0.22, base - f.h * 0.12, f.x - f.w * 0.2, top + f.h * 0.28, f.x - f.w * 0.07, top);
+        ctx.lineTo(f.x + f.w * 0.07, top);
+        ctx.bezierCurveTo(f.x + f.w * 0.2, top + f.h * 0.28, R - f.w * 0.22, base - f.h * 0.12, R, base);
+        ctx.closePath();
+      };
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.fillStyle = 'rgba(70,50,40,0.16)'; // a soft shadow on the sand
+      ctx.beginPath(); ctx.ellipse(f.x + f.w * 0.06, base + 2, f.w * 0.52, f.h * 0.07, 0, 0, TAU); ctx.fill();
+      const g = ctx.createLinearGradient(0, top, 0, base);
+      g.addColorStop(0, '#4a6f9c'); g.addColorStop(0.55, '#7d9cc2'); g.addColorStop(1, '#e6c3b4'); // indigo summit, pink bokashi at the foot
+      cone(); ctx.fillStyle = g; ctx.fill();
+      ctx.save(); cone(); ctx.clip();
+      ctx.strokeStyle = 'rgba(40,70,115,0.35)'; ctx.lineWidth = 1.1; ctx.lineCap = 'round'; // ravines running down the slope
+      ctx.beginPath();
+      for (const [a, b] of [[-0.05, -0.2], [0.03, 0.12], [0.08, 0.3], [-0.1, -0.32], [0.0, -0.08]]) { ctx.moveTo(f.x + f.w * a, top + f.h * 0.22); ctx.quadraticCurveTo(f.x + f.w * (a + b) * 0.6, top + f.h * 0.6, f.x + f.w * (a + b * 1.5), base - f.h * 0.06); }
+      ctx.stroke();
+      // the snow cap: white down to a zig-zag line
+      ctx.fillStyle = '#fbfbf6';
+      ctx.beginPath();
+      ctx.moveTo(f.x - f.w * 0.2, top + f.h * 0.34);
+      const zig = [[-0.17, 0.26], [-0.13, 0.36], [-0.09, 0.27], [-0.05, 0.4], [-0.01, 0.3], [0.03, 0.42], [0.07, 0.31], [0.11, 0.38], [0.15, 0.27], [0.19, 0.34]];
+      for (const [zx, zy] of zig) ctx.lineTo(f.x + f.w * zx, top + f.h * zy);
+      ctx.lineTo(f.x + f.w * 0.2, top + f.h * 0.34);
+      ctx.lineTo(f.x + f.w * 0.3, top - 4); ctx.lineTo(f.x - f.w * 0.3, top - 4);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      cone(); ctx.strokeStyle = '#2d4a78'; ctx.lineWidth = 1.5; ctx.stroke(); // keyline
+      // mist (霞) across the base, drifting slowly
+      for (const [mx, my, mw, mh, sp] of [[-0.12, 0.02, 0.5, 0.06, 0.13], [0.2, -0.07, 0.42, 0.05, -0.1], [-0.28, -0.14, 0.34, 0.045, 0.08]]) {
+        const cx = f.x + f.w * mx + Math.sin(t * sp) * f.w * 0.03, cy = base + f.h * my;
+        ctx.fillStyle = 'rgba(255,246,228,0.88)'; ctx.strokeStyle = 'rgba(217,154,132,0.7)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(cx, cy, f.w * mw * 0.5, f.h * mh, 0, 0, TAU); ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
     }
 
     /** The ice: frost patches, cracks and a few twinkling glints (nothing flows: the water is frozen over). */
