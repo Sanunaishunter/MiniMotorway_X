@@ -11,7 +11,7 @@
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
   const TIME_KEY = 'mmx_time_v1';
-  const MAP_KEY = 'mmx_map_v1';
+  const MAP_KEY = 'mmx_map_v2';
   const C = MM.CFG.CELL;
 
   const store = {
@@ -132,6 +132,7 @@
     mayorSig = '';
     mayorBar.classList.add('hidden'); // a banner left over from the previous game
     renderer.setGame(ui.game);
+    if (ui.mapUi) { ui.mapUi(); if (renderer.mapMode === 'random') toast('地圖:' + ui.themeName(renderer.mapTheme)); }
     renderer.tool = ui.tool;
     stroke = null;
     renderer.preview = null;
@@ -605,18 +606,25 @@
   $('btnTime').onclick = nextTimeMode;
   { const saved = store.get(TIME_KEY); setTimeMode(TIME_MODES.includes(saved) ? saved : 'cycle', false); }
 
-  // map theme: the white snow country (Hokkaido) or the green forest with a few snowfields
-  const MAP_NAMES = { snow: '雪國(全白雪地)', forest: '森林(含雪地)' };
-  function setMapTheme(m, announce) {
-    renderer.setMapTheme(m);
-    store.set(MAP_KEY, renderer.mapTheme);
-    $('icoSnow').style.display = renderer.mapTheme === 'snow' ? '' : 'none';
-    $('icoForest').style.display = renderer.mapTheme === 'forest' ? '' : 'none';
-    $('btnMap').title = '地圖:' + MAP_NAMES[renderer.mapTheme];
-    if (announce) toast('地圖:' + MAP_NAMES[renderer.mapTheme]);
+  // map: random (every new game gets one of the three) or a fixed one: white snow country (Hokkaido), green forest, ukiyo-e beach
+  const MAP_MODES = ['random', 'snow', 'forest', 'beach'];
+  const MAP_NAMES = { random: '隨機(每局換地圖)', snow: '雪國(全白雪地)', forest: '森林(含雪地)', beach: '海灘(浮世繪)' };
+  const THEME_NAMES = { snow: '雪國', forest: '森林', beach: '海灘(浮世繪)' };
+  function showMapUi() {
+    const m = renderer.mapMode;
+    for (const k of MAP_MODES) $('ico' + k[0].toUpperCase() + k.slice(1)).style.display = m === k ? '' : 'none';
+    $('btnMap').title = '地圖:' + MAP_NAMES[m] + '(目前:' + THEME_NAMES[renderer.mapTheme] + ')';
   }
-  $('btnMap').onclick = () => { setMapTheme(renderer.mapTheme === 'snow' ? 'forest' : 'snow', true); sfx.click(); };
-  { const saved = store.get(MAP_KEY); setMapTheme(saved === 'forest' ? 'forest' : 'snow', false); }
+  ui.mapUi = showMapUi;
+  ui.themeName = (t) => THEME_NAMES[t];
+  function setMapMode(m, announce) {
+    renderer.setMapMode(m);
+    store.set(MAP_KEY, renderer.mapMode);
+    showMapUi();
+    if (announce) toast('地圖:' + MAP_NAMES[renderer.mapMode] + (renderer.mapMode === 'random' ? '(目前:' + THEME_NAMES[renderer.mapTheme] + ')' : ''));
+  }
+  $('btnMap').onclick = () => { setMapMode(MAP_MODES[(MAP_MODES.indexOf(renderer.mapMode) + 1) % MAP_MODES.length], true); sfx.click(); };
+  { const saved = store.get(MAP_KEY); setMapMode(MAP_MODES.includes(saved) ? saved : 'random', false); }
 
   // fullscreen (+ landscape lock where the browser allows it)
   const fsEl = document.documentElement;

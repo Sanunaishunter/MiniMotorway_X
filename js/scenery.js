@@ -7,6 +7,8 @@
   const TAU = Math.PI * 2;
 
   const PAL = {
+    sand: { board: '#f3e4bb', light: 'rgba(255,247,218,0.65)', dark: 'rgba(226,170,128,0.26)', grain: 'rgba(150,112,70,0.30)', ripple: 'rgba(178,140,92,0.5)', tuft: 'rgba(122,132,74,0.7)' }, // 浮世繪: paper-cream sand
+    sea: { deep: '#2a5a8a', mid: '#3b78a8', line: '#dcecf2', ink: '#1b3a5e', damp: 'rgba(150,110,66,0.24)' }, // Prussian-blue sea
     patchLight: 'rgba(224,240,176,0.55)',
     patchDark: 'rgba(120,170,100,0.20)',
     tuft: 'rgba(96,150,84,0.55)',
@@ -30,15 +32,16 @@
   };
 
   // sprite sizes in world units; the anchor (trunk base) sits 6 units above the bottom
-  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20], birch: [30, 46] };
+  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20], birch: [30, 46], pine: [40, 46], rock: [28, 18] };
   const smooth = (t) => t * t * (3 - 2 * t);
   const mod = (a, b) => ((a % b) + b) % b;
 
   class Scenery {
-    /** theme: 'forest' (green forest with a few snowfields) or 'snow' (a white Hokkaido-style snow country). */
+    /** theme: 'forest' (green forest with a few snowfields), 'snow' (a white Hokkaido-style snow country)
+     *  or 'beach' (an ukiyo-e sea shore: waves washing onto the sand). */
     constructor(game, theme) {
       this.game = game;
-      this.theme = theme === 'forest' ? 'forest' : 'snow';
+      this.theme = theme === 'forest' || theme === 'beach' ? theme : 'snow';
       const w = game.world;
       const cols = game.cols, rows = game.rows;
       const rnd = MM.mulberry32((game.seed ^ 0x51ed270b) | 0);
@@ -66,7 +69,7 @@
       const sv = [];
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) sv.push(snowF(c, r));
       sv.sort((a, b) => a - b);
-      this.snowTh = this.theme === 'snow' ? -1 : sv[Math.floor(sv.length * 0.7)]; // the snow country is snow everywhere
+      this.snowTh = this.theme === 'snow' ? -1 : this.theme === 'beach' ? Infinity : sv[Math.floor(sv.length * 0.7)]; // the snow country is snow everywhere, the beach has none
       this.snowAt = (x, y) => snowF(x / C - 0.5, y / C - 0.5); // noise value at a world position
       this.isSnowAt = (x, y) => this.snowAt(x, y) > this.snowTh;
       // water test that also works one cell outside the board (the ground and the water run off-screen)
@@ -80,7 +83,8 @@
           if (isWater(c, r)) continue;
           const inBoard = c >= 0 && r >= 0 && c < cols && r < rows;
           const dd = sample(dens, c, r);
-          const p = Math.max(0.04, Math.min(0.95, (dd - 0.3) * 2.2));
+          const beach = this.theme === 'beach';
+          const p = beach ? Math.max(0.02, Math.min(0.34, (dd - 0.45) * 1.1)) : Math.max(0.04, Math.min(0.95, (dd - 0.3) * 2.2));
           for (let sy = -1; sy <= 1; sy += 2) {
             for (let sx = -1; sx <= 1; sx += 2) {
               if (isWater(c + sx, r) || isWater(c, r + sy) || isWater(c + sx, r + sy)) continue; // keep a shore strip
@@ -90,7 +94,11 @@
               const snowy = this.isSnowAt(tx, ty);
               const grove = sample(sak, c, r) > 0.68;
               let kind = 'round', variant = Math.floor(rnd() * PAL.round.length), size = 0.85 + rnd() * 0.3;
-              if (snowy) { // snowfield: mostly snow-laden evergreens, a few bare-ish round trees and snow mounds
+              if (beach) { // black pines (黒松), dune shrubs and sea-worn rocks
+                if (kindRoll < 0.55) { kind = 'pine'; size = 0.9 + rnd() * 0.3; }
+                else if (kindRoll < 0.8) { kind = 'bush'; size = 0.8 + rnd() * 0.3; }
+                else { kind = 'rock'; size = 0.8 + rnd() * 0.5; }
+              } else if (snowy) { // snowfield: mostly snow-laden evergreens, a few bare-ish round trees and snow mounds
                 if (kindRoll < 0.6) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
                 else if (kindRoll < 0.74) kind = 'round';
                 else if (kindRoll < 0.87) { kind = 'birch'; size = 0.9 + rnd() * 0.3; } // white birches, bare in winter
@@ -114,8 +122,14 @@
       const area = cols * rows;
       const rx = () => -C + rnd() * (cols + 2) * C, ry = () => -C + rnd() * (rows + 2) * C;
       for (let i = 0; i < area / 14; i++) this.patches.push({ x: rx(), y: ry(), r: 26 + rnd() * 50, light: rnd() < 0.55 });
-      for (let i = 0; i < area * 1.1; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.tufts.push({ x, y, a: (rnd() - 0.5) * 0.9, l: 3 + rnd() * 3 }); }
-      for (let i = 0; i < area / 5; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.flowers.push({ x, y, c: PAL.flowers[Math.floor(rnd() * PAL.flowers.length)], r: 1 + rnd() * 0.9 }); }
+      const beachGround = this.theme === 'beach';
+      for (let i = 0; i < area * (beachGround ? 0.35 : 1.1); i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.tufts.push({ x, y, a: (rnd() - 0.5) * 0.9, l: 3 + rnd() * 3 }); }
+      for (let i = 0; i < area / 5; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.flowers.push({ x, y, c: beachGround ? ['#f7cdbd', '#fff3e4', '#e9b9a2'][Math.floor(rnd() * 3)] : PAL.flowers[Math.floor(rnd() * PAL.flowers.length)], r: beachGround ? 1.3 + rnd() * 1.1 : 1 + rnd() * 0.9 }); } // (beach: little shells)
+      this.grain = []; this.ripples = [];
+      if (beachGround) {
+        for (let i = 0; i < area * 2.2; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.grain.push(x, y); } // paper / sand grain
+        for (let i = 0; i < area * 0.28; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.ripples.push({ x, y, l: 12 + rnd() * 16, n: 2 + Math.floor(rnd() * 2) }); } // wind ripples in the sand
+      }
 
       // ---- snowfields: soft blobs on a coarse grid (cells well inside a field get big ones, the rim gets small ones), sparkles, drifts
       this.snowBlobs = []; this.snowSpark = []; this.snowDrift = [];
@@ -140,6 +154,7 @@
       this.cracks = [];
       this.frost = [];
       this.sparkles = [];
+      this.sea = new Path2D(); this.foam = []; this.crests = []; this.seaPat = null; this.birds = [];
       for (let n = 0; n < w.n; n++) {
         if (!w.water[n]) continue;
         const c = n % cols, r = (n / cols) | 0;
@@ -151,6 +166,26 @@
         if (e >= 0 && w.water[e]) this.core.rect(x - h, y0, C + 2 * h, y1 - y0);
         if (s >= 0 && w.water[s]) this.core.rect(x0, y - h, x1 - x0, C + 2 * h);
         if (e >= 0 && s >= 0 && w.water[e] && w.water[s] && w.water[s + 1]) this.core.rect(x + h, y + h, C - 2 * h, C - 2 * h);
+        if (this.theme === 'beach') { // the sea: Minkowski-inflated twin of the core (so the sea edge sits where the static shore pass puts it), foam points on land-facing edges, crest curls
+          const R = C * 0.3;
+          const rect = (X, Y, W, H) => { if (this.sea.roundRect) this.sea.roundRect(X - R, Y - R, W + 2 * R, H + 2 * R, R); else this.sea.rect(X - R, Y - R, W + 2 * R, H + 2 * R); };
+          rect(x0, y0, x1 - x0, y1 - y0);
+          if (e >= 0 && w.water[e]) rect(x - h, y0, C + 2 * h, y1 - y0);
+          if (s >= 0 && w.water[s]) rect(x0, y - h, x1 - x0, C + 2 * h);
+          if (e >= 0 && s >= 0 && w.water[e] && w.water[s] && w.water[s + 1]) rect(x + h, y + h, C - 2 * h, C - 2 * h);
+          const ph = rnd() * TAU;
+          const land = (dc, dr) => !isWater(c + dc, r + dr);
+          for (const [dc, dr] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            if (!land(dc, dr)) continue;
+            const tx = -dr, ty = dc; // tangent along the edge
+            for (const f of [-0.4, -0.2, 0, 0.2, 0.4]) {
+              if (Math.abs(f) > 0.3 && !(isWater(c + tx * Math.sign(f), r + ty * Math.sign(f)) && land(dc + tx * Math.sign(f), dr + ty * Math.sign(f)))) continue; // only along a straight shore
+              this.foam.push({ x: x + dc * C / 2 + tx * f * C, y: y + dr * C / 2 + ty * f * C, nx: dc, ny: dr, tx, ty, ph: ph + f * 5, r: 3.4 + rnd() * 1.8 });
+            }
+          }
+          if (rnd() < 0.5) this.crests.push({ x: x + (rnd() - 0.5) * 26, y: y + (rnd() - 0.5) * 26, ph: rnd() * TAU, s: 0.8 + rnd() * 0.6 });
+          continue;
+        }
         // the water is a sheet of ice: cracks (a jagged line, sometimes with a branch) and pale frost patches
         for (let k = 0; k < 2; k++) {
           let px = x + (rnd() - 0.5) * 30, py = y + (rnd() - 0.5) * 30, a = rnd() * TAU;
@@ -167,6 +202,7 @@
       // ---- sky: a few clouds (with shadows on the ground) and drifting petals; screen space, mild parallax
       this.clouds = [];
       for (let i = 0; i < 4; i++) this.clouds.push({ u: rnd(), v: 0.08 + rnd() * 0.84, sp: 5 + rnd() * 7, s: 0.8 + rnd() * 0.8, variant: i % 3 });
+      if (this.theme === 'beach') for (let i = 0; i < 6; i++) this.birds.push({ u: rnd(), v: 0.1 + rnd() * 0.8, sp: 22 + rnd() * 16, ph: rnd() * TAU, s: 0.8 + rnd() * 0.5 });
       this.petals = [];
       for (let i = 0; i < 16; i++) this.petals.push({ u: rnd(), v: rnd(), sp: 7 + rnd() * 9, fall: 10 + rnd() * 8, ph: rnd() * TAU, s: 0.8 + rnd() * 0.7 });
     }
@@ -174,13 +210,24 @@
     // ------------------------------------------------------------ ground (drawn into the static layer, world coordinates)
     drawGround(ctx) {
       const whole = this.theme === 'snow';
+      const beach = this.theme === 'beach';
       for (const p of this.patches) {
-        ctx.fillStyle = whole ? (p.light ? 'rgba(255,255,255,0.85)' : 'rgba(176,201,228,0.32)') : (p.light ? PAL.patchLight : PAL.patchDark); // snow: gentle white rises and blue-grey hollows
+        ctx.fillStyle = beach ? (p.light ? PAL.sand.light : PAL.sand.dark) : whole ? (p.light ? 'rgba(255,255,255,0.85)' : 'rgba(176,201,228,0.32)') : (p.light ? PAL.patchLight : PAL.patchDark); // snow: gentle white rises and blue-grey hollows
         ctx.beginPath();
         ctx.ellipse(p.x, p.y, p.r, p.r * 0.72, 0, 0, TAU);
         ctx.fill();
       }
-      ctx.strokeStyle = whole ? 'rgba(120,150,185,0.45)' : PAL.tuft; // (tufts of grass poking out of the snow)
+      if (beach) { // sand grain, wind ripples (3 parallel wavy lines) like the printed texture of a woodblock
+        ctx.fillStyle = PAL.sand.grain;
+        ctx.beginPath();
+        for (let i = 0; i < this.grain.length; i += 2) ctx.rect(this.grain[i], this.grain[i + 1], 1.3, 1.3);
+        ctx.fill();
+        ctx.strokeStyle = PAL.sand.ripple; ctx.lineWidth = 0.9; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const rp of this.ripples) for (let k = 0; k < rp.n; k++) { const y = rp.y + k * 3.2, x = rp.x + k * 2; ctx.moveTo(x, y); ctx.bezierCurveTo(x + rp.l * 0.3, y - 2.2, x + rp.l * 0.65, y + 2.2, x + rp.l, y); }
+        ctx.stroke();
+      }
+      ctx.strokeStyle = beach ? PAL.sand.tuft : whole ? 'rgba(120,150,185,0.45)' : PAL.tuft; // (tufts of grass poking out of the snow / dune grass)
       ctx.lineWidth = 1.1;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -189,7 +236,7 @@
         ctx.moveTo(t.x + 2, t.y + 0.5); ctx.lineTo(t.x + 2 + Math.sin(t.a + 0.5) * t.l * 0.8, t.y + 0.5 - Math.cos(t.a + 0.5) * t.l * 0.8);
       }
       ctx.stroke();
-      for (const f of whole ? [] : this.flowers) {
+      for (const f of whole ? [] : this.flowers) { // (the beach has little shells instead of flowers)
         ctx.fillStyle = f.c;
         ctx.beginPath();
         ctx.arc(f.x, f.y, f.r, 0, TAU);
@@ -260,6 +307,35 @@
           cap(by - 3, 11.5, 15); cap(by - 12, 9.5, 14); cap(by - 21, 7, 13);
         }
         c.fillStyle = pal.light; c.globalAlpha = snow ? 0 : 0.55; c.beginPath(); c.moveTo(bx - 1, by - 33); c.lineTo(bx - 6.5, by - 21.5); c.lineTo(bx - 1, by - 21.5); c.closePath(); c.fill(); c.globalAlpha = 1;
+      } else if (kind === 'pine') { // 黒松: a twisted trunk and flat, cloud-like tufts of needles, with a woodblock keyline
+        const ink = '#22372f';
+        c.lineJoin = 'round';
+        c.strokeStyle = ink; c.lineWidth = 4.6; c.lineCap = 'round';
+        const trunk = () => { c.beginPath(); c.moveTo(bx - 1, by + 1); c.bezierCurveTo(bx - 6, by - 8, bx + 5, by - 14, bx - 1, by - 25); };
+        trunk(); c.stroke();
+        c.strokeStyle = '#8a5f3e'; c.lineWidth = 2.6; trunk(); c.stroke();
+        const tuft = (cx, cy, rx, ry) => {
+          c.beginPath();
+          c.moveTo(cx - rx, cy);
+          c.bezierCurveTo(cx - rx * 1.05, cy - ry * 1.5, cx - rx * 0.4, cy - ry * 1.5, cx - rx * 0.28, cy - ry * 1.1);
+          c.bezierCurveTo(cx - rx * 0.1, cy - ry * 1.9, cx + rx * 0.55, cy - ry * 1.7, cx + rx * 0.55, cy - ry * 1.05);
+          c.bezierCurveTo(cx + rx * 1.1, cy - ry * 1.3, cx + rx * 1.1, cy - ry * 0.1, cx + rx, cy);
+          c.quadraticCurveTo(cx, cy + ry * 0.6, cx - rx, cy);
+          c.closePath();
+          c.fillStyle = '#2f6046'; c.fill();
+          c.save(); c.clip();
+          c.fillStyle = '#4f8f62'; c.beginPath(); c.ellipse(cx - rx * 0.1, cy - ry * 1.4, rx * 0.8, ry * 0.7, 0, 0, TAU); c.fill(); // lit top
+          c.fillStyle = '#244a3a'; c.beginPath(); c.ellipse(cx, cy + ry * 0.45, rx * 1.1, ry * 0.55, 0, 0, TAU); c.fill(); // shaded belly
+          c.restore();
+          c.strokeStyle = ink; c.lineWidth = 1; c.stroke();
+        };
+        tuft(bx - 9, by - 12, 8.5, 4.4); tuft(bx + 9, by - 17, 8.5, 4.4); tuft(bx, by - 25, 11.5, 5.4);
+      } else if (kind === 'rock') { // a sea-worn rock: blue-grey with a keyline and a pale highlight
+        const poly = [[-11, 5], [-9, -3], [-3, -8], [4, -7], [10, -1], [12, 5]];
+        c.beginPath(); poly.forEach(([dx, dy], i) => (i ? c.lineTo(bx + dx, by + dy) : c.moveTo(bx + dx, by + dy))); c.closePath();
+        c.fillStyle = '#7b8a98'; c.fill();
+        c.fillStyle = '#9fb0bd'; c.beginPath(); c.moveTo(bx - 9, by - 3); c.lineTo(bx - 3, by - 8); c.lineTo(bx + 4, by - 7); c.lineTo(bx - 1, by - 2); c.closePath(); c.fill();
+        c.strokeStyle = '#2a3a4c'; c.lineWidth = 1.1; c.lineJoin = 'round'; c.beginPath(); poly.forEach(([dx, dy], i) => (i ? c.lineTo(bx + dx, by + dy) : c.moveTo(bx + dx, by + dy))); c.closePath(); c.stroke();
       } else if (kind === 'birch') { // a white birch (白樺): pale trunk with dark bark marks, thin bare branches with snow on them
         c.fillStyle = '#f3f3ef'; c.fillRect(bx - 1.6, by - 26, 3.2, 26);
         c.fillStyle = '#4b4641';
@@ -272,7 +348,7 @@
         for (const [dx, dy] of br) dot(bx + dx, by + dy + 0.5, 1.9, PAL.snow);
         dot(bx, by - 26.5, 2.2, PAL.snow);
       } else {
-        const pal = PAL.round[variant];
+        const pal = this.theme === 'beach' ? { dark: '#5f7d4a', mid: '#86a463', light: '#b3c984' } : PAL.round[variant];
         if (snow) { // a snow-covered shrub: a white mound with a bit of green showing
           dot(bx - 4.5, by - 4, 5.8, PAL.snowShade); dot(bx + 5, by - 4.5, 5.2, PAL.snowShade); dot(bx, by - 7.5, 6.8, PAL.snow); dot(bx - 2, by - 9, 3.4, '#ffffff');
           dot(bx + 3.5, by - 2.5, 2.2, PAL.snowTree.dark);
@@ -295,11 +371,19 @@
       const dpr = v.dpr;
       this.setScale(dpr * v.scale);
 
-      // ---- the ice: frost patches, cracks and a few twinkling glints (nothing flows: the water is frozen over)
       ctx.setTransform(dpr * v.scale, 0, 0, dpr * v.scale, dpr * v.ox, dpr * v.oy);
+      const x0 = -v.ox / v.scale - 40, x1 = (v.w - v.ox) / v.scale + 40, y0 = -v.oy / v.scale - 40, y1 = (v.h - v.oy) / v.scale + 40;
+      if (this.theme === 'beach') this.drawSea(ctx, v, t, x0, x1, y0, y1);
+      else this.drawIce(ctx, t, x0, x1, y0, y1);
+
+      // ---- trees (sorted by y, drawn back to front); the wind only moves them when zoomed in (fully from 1.5x)
+      this.drawTrees(ctx, v, t, world, zoom, x0, x1, y0, y1);
+    }
+
+    /** The ice: frost patches, cracks and a few twinkling glints (nothing flows: the water is frozen over). */
+    drawIce(ctx, t, x0, x1, y0, y1) {
       ctx.save();
       ctx.clip(this.core);
-      const x0 = -v.ox / v.scale - 40, x1 = (v.w - v.ox) / v.scale + 40, y0 = -v.oy / v.scale - 40, y1 = (v.h - v.oy) / v.scale + 40;
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = '#ffffff';
       for (const f of this.frost) {
@@ -333,8 +417,88 @@
       }
       ctx.restore();
       ctx.globalAlpha = 1;
+    }
 
-      // ---- trees (sorted by y, drawn back to front); the wind only moves them when zoomed in (fully from 1.5x)
+    /** The seigaiha tile (concentric wave scales, 青海波): the pattern that fills the sea. */
+    seaPattern(ctx) {
+      const TW = 34, TH = 17, q = Math.max(1, this.q);
+      if (this.seaPat && this.seaPat.q === q) return this.seaPat;
+      const cw = Math.round(TW * q), ch = Math.round(TH * q);
+      const cv = document.createElement('canvas');
+      cv.width = cw; cv.height = ch;
+      const c = cv.getContext('2d');
+      c.scale(cw / TW, ch / TH);
+      const R = TW / 2;
+      for (let row = -2; row <= 3; row++) {
+        for (let k = -1; k <= 2; k++) {
+          const cx = k * TW + (row & 1 ? R : 0), cy = row * (TH / 2);
+          const rings = [[R, PAL.sea.deep], [R * 0.78, PAL.sea.mid], [R * 0.56, PAL.sea.deep], [R * 0.34, PAL.sea.mid], [R * 0.14, PAL.sea.deep]];
+          for (const [r, col] of rings) {
+            c.beginPath(); c.arc(cx, cy, r, 0, TAU);
+            c.fillStyle = col; c.fill();
+            c.strokeStyle = PAL.sea.line; c.lineWidth = r === R ? 0.9 : 0.55; c.globalAlpha = r === R ? 0.8 : 0.55; c.stroke(); c.globalAlpha = 1;
+          }
+        }
+      }
+      this.seaPat = { q, TW, TH, cw, ch, pat: ctx.createPattern(cv, 'repeat') };
+      return this.seaPat;
+    }
+
+    /** The beach sea (ukiyo-e): indigo seigaiha waves with white crest curls, and foam that washes up the sand and ebbs back. */
+    drawSea(ctx, v, t, x0, x1, y0, y1) {
+      const wash = 0.5 + 0.5 * Math.sin(t * 1.05); // 0 = ebb, 1 = high tide
+      const R = C * 0.3;
+      ctx.lineJoin = 'round';
+      // damp sand left behind by the wave (a darker band that breathes in and out), then the dark keyline of the sea
+      ctx.strokeStyle = PAL.sea.damp; ctx.lineWidth = 2 * (R + 3 + wash * 9);
+      ctx.stroke(this.core);
+      ctx.strokeStyle = PAL.sea.ink; ctx.lineWidth = 2 * (R + 1.6);
+      ctx.stroke(this.core);
+      ctx.fillStyle = PAL.sea.deep;
+      ctx.fill(this.sea);
+      // the sea itself: seigaiha scales drifting slowly, crest curls
+      ctx.save();
+      ctx.clip(this.sea);
+      const sp = this.seaPattern(ctx);
+      if (sp.pat && sp.pat.setTransform && typeof DOMMatrix !== 'undefined') sp.pat.setTransform(new DOMMatrix().translate(t * 2.2, Math.sin(t * 0.7) * 1.6).scale(sp.TW / sp.cw, sp.TH / sp.ch));
+      ctx.fillStyle = sp.pat;
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff';
+      for (const cr of this.crests) { // a small Hokusai crest: a curl with claw-like foam fingers, rocking on the swell
+        if (cr.x < x0 || cr.x > x1 || cr.y < y0 || cr.y > y1) continue;
+        const b = Math.sin(t * 1.2 + cr.ph), s = cr.s;
+        ctx.save();
+        ctx.translate(cr.x + b * 2.5, cr.y + Math.cos(t * 1.2 + cr.ph) * 1.2);
+        ctx.scale(s, s);
+        ctx.globalAlpha = 0.55 + 0.35 * Math.max(0, b);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(-9, 3); ctx.bezierCurveTo(-7, -5, 3, -7, 7, -2); ctx.bezierCurveTo(4, -4, 0, -2, -1, 2); ctx.stroke();
+        for (const [fx, fy] of [[2, -6.2], [5, -4.4], [7.4, -1.6]]) { ctx.beginPath(); ctx.arc(fx, fy, 1.15, 0, TAU); ctx.fill(); }
+        ctx.restore();
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      // foam claws sweeping onto the sand and sliding back
+      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = '#8fb6cc';
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      for (const f of this.foam) {
+        if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        const a = 0.5 + 0.5 * Math.sin(t * 1.05 + f.ph * 0.12);
+        const d = -1 + a * 10; // how far past the shoreline this claw has run
+        const px = f.x + f.nx * d, py = f.y + f.ny * d;
+        const rx = f.r * (0.8 + 0.5 * a), ry = 1.5 + 1.6 * a;
+        ctx.moveTo(px + rx * Math.cos(Math.atan2(f.ty, f.tx)), py + rx * Math.sin(Math.atan2(f.ty, f.tx)));
+        ctx.ellipse(px, py, rx, ry, Math.atan2(f.ty, f.tx), 0, TAU);
+      }
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    drawTrees(ctx, v, t, world, zoom, x0, x1, y0, y1) {
+      const dpr = v.dpr;
       const windAmp = smooth(Math.max(0, Math.min(1, ((zoom || 1) - 1.1) / 0.4)));
       const trees = this.trees;
       const k = dpr * v.scale;
@@ -346,7 +510,7 @@
         if (tr.x < x0 || tr.x > x1) continue;
         if (tr.cell >= 0 && (world.bld[tr.cell] || world.island[tr.cell] || world.ringId[tr.cell])) continue; // cleared for a building
         const sp = this.sprite(tr.kind, tr.variant, tr.snow);
-        const sway = windAmp * (Math.sin(t * 1.15 + tr.ph) * 0.045 + Math.sin(t * 0.35 + tr.x * 0.012) * 0.035);
+        const sway = tr.kind === 'rock' ? 0 : windAmp * (Math.sin(t * 1.15 + tr.ph) * 0.045 + Math.sin(t * 0.35 + tr.x * 0.012) * 0.035);
         const sc = k * tr.s;
         ctx.setTransform(sc, 0, sc * sway, sc, (v.ox + tr.x * v.scale) * dpr, (v.oy + tr.y * v.scale) * dpr);
         ctx.drawImage(sp.cv, -sp.ax, -sp.ay, sp.W, sp.H);
@@ -368,6 +532,15 @@
         cv.width = Math.ceil(W * dpr); cv.height = Math.ceil(H * dpr);
         const c = cv.getContext('2d');
         c.scale(dpr, dpr);
+        if (this.theme === 'beach') { // 霞: flat bands of mist with rounded ends, cream with a pink underside and a thin red-brown keyline
+          const BANDS = [[[0.34, 0.5, 0.3, 0.075], [0.62, 0.62, 0.34, 0.07], [0.5, 0.76, 0.42, 0.065]], [[0.3, 0.55, 0.26, 0.08], [0.58, 0.45, 0.3, 0.075], [0.52, 0.72, 0.4, 0.07]], [[0.5, 0.5, 0.4, 0.08], [0.38, 0.68, 0.3, 0.07], [0.7, 0.74, 0.28, 0.06]]][variant];
+          const bands = () => { c.beginPath(); for (const [fx, fy, frx, fry] of BANDS) { c.moveTo(fx * W + frx * W, fy * H); c.ellipse(fx * W, fy * H, frx * W, fry * H * 2, 0, 0, TAU); } };
+          if (shadow) { c.fillStyle = 'rgb(60,40,30)'; bands(); c.fill(); return { cv, W, H }; }
+          c.lineJoin = 'round'; c.strokeStyle = '#d99a84'; c.lineWidth = 3; bands(); c.stroke();
+          c.fillStyle = '#fff7e8'; bands(); c.fill();
+          c.save(); bands(); c.clip(); c.fillStyle = '#f8d2c0'; c.fillRect(0, H * 0.7, W, H); c.restore(); // bokashi: the underside shades to pink
+          return { cv, W, H };
+        }
         const bumps = SHAPES[variant].map(([fx, fr]) => [fx * W, base - fr * W * 0.9, fr * W]);
         const left = bumps[0][0] - bumps[0][2] * 0.9, right = bumps[bumps.length - 1][0] + bumps[bumps.length - 1][2] * 0.9;
         const outline = () => {
@@ -408,9 +581,9 @@
         ctx.globalAlpha = 0.21;
         ctx.drawImage(cd.cv, x, y, w, h);
       }
-      // petals drifting in the breeze
+      // petals drifting in the breeze (none on the beach: there plovers skim along the shore instead)
       ctx.globalAlpha = 0.85;
-      for (const p of this.petals) {
+      for (const p of this.theme === 'beach' ? [] : this.petals) {
         const x = mod(p.u * v.w + t * p.sp + Math.sin(t * 0.7 + p.ph) * 12, v.w + 20) - 10;
         const y = mod(p.v * v.h + t * p.fall, v.h + 20) - 10;
         if (this.isSnowAt((x - v.ox) / v.scale, (y - v.oy) / v.scale)) continue; // no cherry blossom in the snow
@@ -421,6 +594,17 @@
         ctx.fillStyle = '#f9c3d4';
         ctx.beginPath(); ctx.ellipse(0, 0, 3.4, 2.1, 0, 0, TAU); ctx.fill();
         ctx.restore();
+      }
+      if (this.birds.length) { // 千鳥: little sea birds flapping across the sky
+        ctx.strokeStyle = '#27384e'; ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = 0.8;
+        for (const b of this.birds) {
+          const x = mod(b.u * (v.w + 80) + t * b.sp, v.w + 80) - 40, y = b.v * v.h + Math.sin(t * 0.8 + b.ph) * 8;
+          const f = Math.sin(t * 7 + b.ph) * 3.2 * b.s, sc = b.s * 4;
+          ctx.beginPath();
+          ctx.moveTo(x - 2.2 * sc, y - f); ctx.quadraticCurveTo(x - sc, y - 1.4 * sc - f * 0.5, x, y);
+          ctx.quadraticCurveTo(x + sc, y - 1.4 * sc - f * 0.5, x + 2.2 * sc, y - f);
+          ctx.stroke();
+        }
       }
       // snowflakes, only over the snowfields
       ctx.fillStyle = '#ffffff';

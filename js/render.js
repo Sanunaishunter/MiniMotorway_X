@@ -18,7 +18,12 @@
     hwEdge: '#3f8a63', // expressway verge (green)
     hw: '#59616d', // darker expressway asphalt
     ink: '#2f3a4b',
+    beachBoard: '#f3e4bb', // ukiyo-e sand
+    beachDot: 'rgba(150,112,70,0.2)',
+    beachWet: '#e4d09c', // wet sand along the shore
+    beachSea: '#2a5a8a',
   };
+  const MAP_THEMES = ['snow', 'forest', 'beach'];
 
   const MAX_ZOOM = 3;
   const CAR_KINDS = ['sedan', 'sedan', 'kei', 'kei', 'van', 'truck', 'taxi']; // body styles, picked by car id
@@ -51,7 +56,8 @@
       this.preview = null; // {a, b, reason} while dragging a tunnel
       this.tpFirst = -1; // node of the portal entrance that has been picked while the exit is still to be chosen
       this.scn = null; // decorative scenery (trees, ice, clouds)
-      this.mapTheme = 'snow'; // 'snow' (all white, Hokkaido) or 'forest' (green with a few snowfields)
+      this.mapTheme = 'snow'; // the map of the current game: 'snow' (all white, Hokkaido), 'forest' (green with a few snowfields) or 'beach' (ukiyo-e sea shore)
+      this.mapMode = 'random'; // 'random' = every new game gets one of the three maps; otherwise the chosen map stays
       this.police = null; // decorative traffic police cars
       this.planes = null; // decorative aeroplanes crossing the sky
       this.nukeAt = -1e9; // when the last 超級原子彈 went off (performance.now() ms)
@@ -66,6 +72,10 @@
 
     setGame(game) {
       this.game = game;
+      if (this.mapMode === 'random') { // a different map from the last one
+        const others = MAP_THEMES.filter((m) => m !== this.mapTheme);
+        this.mapTheme = others[Math.floor(Math.random() * others.length)];
+      }
       this.scn = new MM.Scenery(game, this.mapTheme);
       this.police = new MM.Police(game.world, (Math.random() * 1e9) | 0); // decorative patrol cars (not part of the simulation)
       this.planes = new MM.Planes((Math.random() * 1e9) | 0);
@@ -74,10 +84,13 @@
       this.resetCamera();
     }
 
-    /** Switch between the white snow country and the green forest (the map is redecorated, the game is untouched). */
-    setMapTheme(t) {
-      this.mapTheme = t === 'forest' ? 'forest' : 'snow';
-      if (this.game) { this.scn = new MM.Scenery(this.game, this.mapTheme); this.statics = null; }
+    /** Map choice: 'random' (a new map every game) or one of snow / forest / beach (the map is redecorated, the game is untouched). */
+    setMapMode(m) {
+      this.mapMode = MAP_THEMES.includes(m) ? m : 'random';
+      if (this.mapMode !== 'random' && this.mapMode !== this.mapTheme) {
+        this.mapTheme = this.mapMode;
+        if (this.game) { this.scn = new MM.Scenery(this.game, this.mapTheme); this.statics = null; }
+      }
     }
 
     resize(w, h, dpr) {
@@ -173,13 +186,14 @@
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
       ctx.scale(v.dpr, v.dpr);
-      ctx.fillStyle = this.scn.theme === 'snow' ? THEME.snowBoard : THEME.board;
+      const th = this.scn.theme;
+      ctx.fillStyle = th === 'snow' ? THEME.snowBoard : th === 'beach' ? THEME.beachBoard : THEME.board;
       ctx.fillRect(0, 0, v.w, v.h);
       ctx.translate(v.ox, v.oy);
       ctx.scale(v.scale, v.scale);
       this.scn.drawGround(ctx); // grass patches, tufts and flowers
       // lattice dots
-      ctx.fillStyle = this.scn.theme === 'snow' ? THEME.snowDot : THEME.dot;
+      ctx.fillStyle = th === 'snow' ? THEME.snowDot : th === 'beach' ? THEME.beachDot : THEME.dot;
       for (let n = 0; n < w.n; n++) {
         if (w.water[n]) continue;
         ctx.beginPath();
@@ -211,8 +225,8 @@
         ctx.fill();
         ctx.stroke();
       };
-      pass(C * 0.3 + 3.5, THEME.shore);
-      pass(C * 0.3, THEME.water);
+      if (th === 'beach') { pass(C * 0.3 + 8, THEME.beachWet); pass(C * 0.3, THEME.beachSea); } // (the animated sea is painted over this by the scenery)
+      else { pass(C * 0.3 + 3.5, THEME.shore); pass(C * 0.3, THEME.water); }
       this.statics = { cv };
     }
 
