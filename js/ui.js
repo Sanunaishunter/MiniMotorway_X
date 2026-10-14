@@ -138,7 +138,7 @@
     renderer.preview = null;
     pointers.clear(); gesture = null; panning = null;
     unlockedTools.clear();
-    setTpFirst(-1);
+    setTpFirst(-1); setHandFirst(-1);
     hud.inv = '';
     if (ui.tool !== 'road') setTool('road');
   }
@@ -270,7 +270,7 @@
       <p>${final ? '市長的命令已經用過了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
       <div class="big">${g.score}</div>
       <p>輛車成功送達 · 撐到第 ${g.week} 週${newBest ? ' · <b style="color:#e8590c">新紀錄!</b>' : ` · 最高 ${ui.best}`}</p>
-      ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止,還會送你一顆<b>超級原子彈</b>(把整張地圖的道路抹除重來)。</p>' : ''}
+      ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止,還會送你一顆<b>超級原子彈</b>(把整張地圖的道路抹除重來)、<b>3 個超大圓環</b>,以及<b>天神之手</b>(能把房子與目的地搬到別的地方)。</p>' : ''}
       <button class="btn" id="mAgain">${final ? '重來' : '再玩一次'}</button>${final ? '<button class="btn gold" id="mKayray">召喚 Kayray 的祝福</button>' : ''}`);
     $('mAgain').onclick = () => { restart(); };
     if (final) {
@@ -281,7 +281,7 @@
         ui.mode = 'play';
         ui.overShown = false;
         ui.overTimer = 0;
-        toast('Kayray 的祝福降臨:無限無敵,還送你一顆超級原子彈!');
+        toast('Kayray 的祝福降臨:無限無敵,還送你超級原子彈、3 個超大圓環和天神之手!');
       };
     }
   }
@@ -326,7 +326,7 @@
 
   // ---------------------------------------------------------------- tools & input
   function setTool(t) {
-    if (t !== ui.tool) setTpFirst(-1);
+    if (t !== ui.tool) { setTpFirst(-1); setHandFirst(-1); }
     ui.tool = t;
     renderer.tool = t;
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
@@ -353,8 +353,9 @@
       toast('轟!道路全部被抹除了,重新規劃吧');
     }
   }
-  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'mega', 'tp'];
+  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'mega', 'tp', 'hand'];
   function setTpFirst(n) { ui.tpFirst = n; renderer.tpFirst = n; }
+  function setHandFirst(n) { ui.handFirst = n; renderer.handFirst = n; }
   let stroke = null;
   let lastDeny = 0;
   const DENY_TEXT = {
@@ -419,6 +420,25 @@
     else if (r.reason === 'tpend') deny('傳送門在路的盡頭,不能再接路(先用橡皮擦拆掉傳送門)');
   }
 
+  /** 天神之手: tap a house / destination to lift it, then tap an empty spot to put it down. */
+  function pickHand(g, n) {
+    const w = g.world;
+    if (g.inv.hand <= 0) { deny('天神之手要召喚 Kayray 的祝福才拿得到'); return; }
+    if (ui.handFirst == null || ui.handFirst < 0) {
+      if (!w.bld[n]) { deny('先點一棟房子或一個目的地把它拿起來'); return; }
+      setHandFirst(n);
+      sfx.click();
+      toast('拿起來了,再點一塊空地放下(點自己取消)');
+      return;
+    }
+    if (n === ui.handFirst) { setHandFirst(-1); toast('已取消'); return; }
+    if (w.bld[n]) { setHandFirst(n); sfx.click(); return; } // picked another building instead
+    const r = g.moveBuilding(ui.handFirst, n);
+    if (r.ok) { setHandFirst(-1); sfx.place(); toast('搬好了!路沒有跟著動,記得重新接路'); }
+    else if (r.reason === 'near') deny('離別的建築太近了,至少隔一格');
+    else deny('這裡不能放:要是空地(不能是水面、道路、設施)');
+  }
+
   /** Portal tool: tap a road end for the first door, another road end for the second. */
   function pickPortal(g, n) {
     if (g.inv.tp <= 0) { deny('傳送門用完了:每送達 100 輛車可獲得一對'); return; }
@@ -481,6 +501,9 @@
       const r = g.placeMega(g.megaAnchor(n));
       if (r.ok) sfx.place();
       else denyFor(r.reason);
+      stroke = null;
+    } else if (tool === 'hand') {
+      pickHand(g, n);
       stroke = null;
     } else if (tool === 'tp') {
       pickPortal(g, n);
@@ -689,7 +712,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'tp', 'nuke']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'tp', 'nuke', 'hand']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {
@@ -713,7 +736,7 @@
         btn.classList.toggle('locked', !unlockedTools.has(k));
         btn.classList.toggle('empty', g.inv[k] <= 0);
         const badge = btn.querySelector('.badge');
-        if (badge) badge.textContent = g.inv[k];
+        if (badge) badge.textContent = k === 'hand' ? '∞' : g.inv[k];
       }
     }
   }

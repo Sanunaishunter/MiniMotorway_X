@@ -1006,6 +1006,7 @@ console.log('19. 超級原子彈: given with Kayray\'s blessing (one at a time),
   check(g.inv.nuke === 0, 'the failed city has no nuke yet');
   g.kayrayBlessing();
   check(g.inv.nuke === 1, 'summoning Kayray\'s blessing gives one nuke');
+  check(g.inv.mega >= 3 && g.inv.hand === 1, 'and three mega roundabouts and the Hand of God (mega ' + g.inv.mega + ')');
 
   // equipment everywhere, then the bomb
   const w = g.world;
@@ -1249,6 +1250,51 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   const w2 = m2.g.world, c0 = m2.tl + 3 * w2.cols + 1;
   m2.g.addEdge(c0 - 1, c0, 1); m2.g.addEdge(c0, c0 + 1, 1); m2.g.addEdge(c0 + 1, c0 + 2, 1);
   check(m2.g.placeMega(m2.tl).ok && !w2.rawBetween(c0 - 1, c0) && !w2.rawBetween(c0, c0 + 1) && !w2.rawBetween(c0 + 1, c0 + 2), 'roads inside the footprint are cleared when the ring is laid');
+}
+
+console.log('24. 天神之手 (Hand of God): lift a house or destination and put it down somewhere else');
+{
+  const g = new MM.Game({ seed: 21 });
+  const w = g.world;
+  const h = g.houses[0], d = g.dests[0];
+  const from = h.node;
+  let spot = -1;
+  for (let n = 0; n < w.n && spot < 0; n++) if (!g.checkMove(from, n) || g.checkMove(from, n) === 'none') { g.inv.hand = 1; if (!g.checkMove(from, n)) spot = n; }
+  g.inv.hand = 0;
+  check(g.checkMove(from, spot) === 'none' && !g.moveBuilding(from, spot).ok, 'without the Hand nothing can be moved');
+  g.inv.hand = 1;
+  check(g.checkMove(from, from) === 'spot' && g.checkMove(spot, spot) === 'nobld', 'it needs a building, and a different spot');
+  const water = w.water.findIndex((x) => x === 1);
+  check(water < 0 || g.checkMove(from, water) === 'spot', 'not onto water');
+  const dn = d.node;
+  const adj = [1, -1, w.cols, -w.cols].map((o) => dn + o).find((n) => n >= 0 && n < w.n && !w.water[n] && !w.bld[n]);
+  check(adj === undefined || g.checkMove(from, adj) === 'near', 'not right next to another building');
+  const r = g.moveBuilding(from, spot);
+  check(r.ok && h.node === spot && w.bld[spot] === h && !w.bld[from], 'the house moves: the node, the world map');
+  check(g.events.some((e) => e.type === 'move' && e.node === spot), 'a move event is sent');
+  check(g.houses.includes(h) && g.buildings.includes(h) && g.buildings.length === g.houses.length + g.dests.length, 'it is still the same house');
+  check(g.moveBuilding(from, spot).reason === 'nobld', 'the old spot is empty now');
+
+  // a destination that is moved while cars are on their way: the cars are recalled, their trips go back to the house
+  const g2 = new MM.Game({ seed: 8 });
+  g2.inv.hand = 1;
+  for (const hh of g2.houses) { const dd = g2.dests.find((x) => x.color === hh.color); if (dd) connect(g2, hh.node, dd.node); }
+  let moved = null, err = null;
+  for (let t = 0; t < 25 * 40 && !moved; t++) {
+    g2.update(0.04);
+    const car = g2.cars.find((c) => !c.dead);
+    if (car && g2.time > 12) {
+      const dd = car.dest;
+      let to = -1;
+      for (let n = 0; n < g2.world.n && to < 0; n++) if (!g2.checkMove(dd.node, n)) to = n;
+      const before = dd.inbound;
+      if (to >= 0 && g2.moveBuilding(dd.node, to).ok) moved = { dd, before };
+    }
+  }
+  check(!!moved && g2.cars.every((c) => c.dead || c.dest !== moved.dd), 'cars heading for a moved destination are recalled');
+  for (let t = 0; t < 25 * 20; t++) { g2.update(0.04); err = err || sanity(g2); g2.events.length = 0; }
+  check(!err, 'the game carries on with consistent bookkeeping (' + err + ')');
+  check(moved && moved.dd.inbound >= 0, 'inbound count never goes negative');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

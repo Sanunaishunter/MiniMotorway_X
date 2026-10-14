@@ -55,7 +55,7 @@
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, mega: 0, tp: 0, nuke: 0 };
+      this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, mega: 0, tp: 0, nuke: 0, hand: 0 };
       this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (8x8, four lanes), center, nodes[] in circulation order, inner[] island nodes}
       this.bigSeq = 0;
       this.nextId = 1;
@@ -497,6 +497,39 @@
         this.inv.tp++;
         this.events.push({ type: 'portalgift', style });
       }
+    }
+
+    // ---- 天神之手: lift a house or destination and put it down somewhere else
+    /** Why the building on `from` cannot be moved to `to` ('none' / 'nobld' / 'spot' / 'near'), or null if it can. */
+    checkMove(from, to) {
+      const w = this.world;
+      if (this.inv.hand <= 0) return 'none';
+      if (from < 0 || !w.bld[from]) return 'nobld';
+      if (to < 0 || to >= w.n || to === from) return 'spot';
+      if (w.water[to] || w.bld[to] || w.feat[to] || w.island[to] || w.ringId[to] || w.portal.has(to) || w.deg(to) > 0) return 'spot';
+      const c = w.col(to), r = w.row(to);
+      for (const b of this.buildings) {
+        if (b.node === from) continue;
+        if (Math.abs(w.col(b.node) - c) + Math.abs(w.row(b.node) - r) < 2) return 'near';
+      }
+      return null;
+    }
+
+    /** Move the building on `from` to the empty node `to` (roads stay where they are, so it has to be wired up again). */
+    moveBuilding(from, to) {
+      const w = this.world;
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
+      const bad = this.checkMove(from, to);
+      if (bad) return { ok: false, reason: bad };
+      const b = w.bld[from];
+      for (const car of this.cars) if (!car.dead && car.dest === b) this.killCar(car, true); // cars heading for a destination that just left
+      w.bld[from] = null;
+      b.node = to;
+      w.bld[to] = b;
+      this.cleanFeatures([from]);
+      this.validateCars();
+      this.events.push({ type: 'move', from, node: to, color: b.color });
+      return { ok: true };
     }
 
     // ---- 超級原子彈: wipe every road off the map in one go
@@ -1128,6 +1161,8 @@
       this.mayorActive = false;
       this.over = null;
       this.inv.nuke = 1; // the blessing comes with a 超級原子彈 (one at a time: see advanceWeek)
+      this.inv.mega += 3; // ... three 超大圓環
+      this.inv.hand = 1; // ... and the 天神之手 (not used up: 1 means "owned")
       this.events.push({ type: 'kayray' });
       return true;
     }

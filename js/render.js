@@ -54,6 +54,7 @@
       this.hover = -1;
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
+      this.handFirst = -1; // building picked up by the 天神之手 (its node), while the new spot is still to be chosen
       this.tpFirst = -1; // node of the portal entrance that has been picked while the exit is still to be chosen
       this.scn = null; // decorative scenery (trees, ice, clouds)
       this.mapTheme = 'snow'; // the map of the current game: 'snow' (all white, Hokkaido), 'forest' (green with a few snowfields) or 'beach' (ukiyo-e sea shore)
@@ -1132,6 +1133,33 @@
         }
         ctx.setLineDash([]);
       }
+      // 天神之手: the lifted building follows the pointer as a ghost (green = it can be put down there)
+      if (this.tool === 'hand' && g.canEdit()) {
+        const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+        if (this.handFirst >= 0 && w.bld[this.handFirst]) {
+          const b = w.bld[this.handFirst];
+          const fx = this.nodeX(this.handFirst), fy = this.nodeY(this.handFirst);
+          ctx.strokeStyle = '#d99a00'; ctx.lineWidth = 2.6; ctx.setLineDash([5, 4]);
+          ctx.beginPath(); ctx.arc(fx, fy, 20 + 3 * pulse, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+          if (this.hover >= 0 && this.hover !== this.handFirst) {
+            const bad = w.bld[this.hover] ? null : g.checkMove(this.handFirst, this.hover);
+            const x = this.nodeX(this.hover), y = this.nodeY(this.hover);
+            const ok = !w.bld[this.hover] && !bad;
+            ctx.globalAlpha = 0.75;
+            ctx.fillStyle = ok ? MM.COLORS[b.color].main : '#b9bec8';
+            rr(ctx, x - 13, y - 13, 26, 26, 7); ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = ok ? '#1e9a64' : '#e03c46'; ctx.lineWidth = 2.4;
+            rr(ctx, x - 15, y - 15, 30, 30, 8); ctx.stroke();
+            ctx.setLineDash([3, 5]); ctx.strokeStyle = 'rgba(217,154,0,0.8)'; ctx.lineWidth = 1.6;
+            ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+          }
+        } else {
+          ctx.strokeStyle = `rgba(217,154,0,${0.35 + 0.4 * pulse})`; ctx.lineWidth = 2.2; ctx.setLineDash([4, 4]);
+          for (const b of g.buildings) { ctx.beginPath(); ctx.arc(this.nodeX(b.node), this.nodeY(b.node), 20, 0, 6.2832); ctx.stroke(); }
+          ctx.setLineDash([]);
+        }
+      }
       // portals: road ends that can take one (pulsing), and the entrance picked so far
       if (this.tool === 'tp' && g.canEdit()) {
         const pulse = 0.5 + 0.5 * Math.sin(now / 220);
@@ -1265,6 +1293,9 @@
           const col = style === 'blue' ? '#4aa8ff' : '#ff8fb8';
           this.fx.push({ kind: 'ring', node: e.from, color: col, t0: g.time, dur: 0.35, r: 14 });
           this.fx.push({ kind: 'ring', node: e.to, color: col, t0: g.time, dur: 0.45, r: 20 });
+        } else if (e.type === 'move') {
+          this.fx.push({ kind: 'ring', node: e.from, color: '#ffd24d', t0: g.time, dur: 0.6, r: 34 });
+          this.fx.push({ kind: 'ring', node: e.node, color: MM.COLORS[e.color].main, t0: g.time, dur: 0.9, r: 46 });
         } else if (e.type === 'nuke') {
           this.nukeAt = performance.now();
         } else if (e.type === 'kayray') {
