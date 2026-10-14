@@ -740,7 +740,7 @@
       const st = this.statics;
       ctx.drawImage(st.cv, 0, 0, v.w, v.h);
       const clock = now / 1000;
-      this.scn.drawBehind(ctx, v, clock, g.world); // flowing water, swaying trees
+      this.scn.drawBehind(ctx, v, clock, g.world, this.cam.zoom); // flowing water, swaying trees
 
       ctx.save();
       ctx.translate(v.ox, v.oy);

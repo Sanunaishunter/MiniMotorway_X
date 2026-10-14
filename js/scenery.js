@@ -23,6 +23,10 @@
     sakura: [{ dark: '#e99ab4', mid: '#f3b5ca', light: '#fbd3e0' }],
     trunk: '#8a6a4a',
     shadow: 'rgba(38,78,52,0.28)',
+    snowShadow: 'rgba(80,110,150,0.30)',
+    snowTree: { dark: '#3f7567', mid: '#5a9484', light: '#79b0a0' }, // evergreens in the snow are a cold, bluish green
+    snow: '#f7fbff',
+    snowShade: '#dce8f4',
   };
 
   // sprite sizes in world units; the anchor (trunk base) sits 6 units above the bottom
@@ -41,17 +45,28 @@
       this.sprites = null;
       this.cloudSprites = null;
 
-      // two coarse noise lattices: where the forest is dense / where cherry trees grow
-      const S = 5, gw = Math.ceil(cols / S) + 3, gh = Math.ceil(rows / S) + 3;
-      const lattice = () => { const a = new Float32Array(gw * gh); for (let i = 0; i < a.length; i++) a[i] = rnd(); return a; };
-      const dens = lattice(), sak = lattice();
-      const sample = (a, x, y) => {
-        const fx = x / S + 1, fy = y / S + 1;
-        const ix = Math.floor(fx), iy = Math.floor(fy);
-        const tx = smooth(fx - ix), ty = smooth(fy - iy);
-        const g = (i, j) => a[Math.max(0, Math.min(gh - 1, j)) * gw + Math.max(0, Math.min(gw - 1, i))];
-        return (g(ix, iy) * (1 - tx) + g(ix + 1, iy) * tx) * (1 - ty) + (g(ix, iy + 1) * (1 - tx) + g(ix + 1, iy + 1) * tx) * ty;
+      // coarse value-noise fields: where the forest is dense / where cherry trees grow / where the snowfields lie
+      const field = (S) => {
+        const gw = Math.ceil(cols / S) + 3, gh = Math.ceil(rows / S) + 3;
+        const a = new Float32Array(gw * gh);
+        for (let i = 0; i < a.length; i++) a[i] = rnd();
+        return (x, y) => {
+          const fx = x / S + 1, fy = y / S + 1;
+          const ix = Math.floor(fx), iy = Math.floor(fy);
+          const tx = smooth(fx - ix), ty = smooth(fy - iy);
+          const g = (i, j) => a[Math.max(0, Math.min(gh - 1, j)) * gw + Math.max(0, Math.min(gw - 1, i))];
+          return (g(ix, iy) * (1 - tx) + g(ix + 1, iy) * tx) * (1 - ty) + (g(ix, iy + 1) * (1 - tx) + g(ix + 1, iy + 1) * tx) * ty;
+        };
       };
+      const dens = field(5), sak = field(5), snowF = field(7);
+      const sample = (f, x, y) => f(x, y);
+      // the snowfields: the coldest ~30% of the board
+      const sv = [];
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) sv.push(snowF(c, r));
+      sv.sort((a, b) => a - b);
+      this.snowTh = sv[Math.floor(sv.length * 0.7)];
+      this.snowAt = (x, y) => snowF(x / C - 0.5, y / C - 0.5); // noise value at a world position
+      this.isSnowAt = (x, y) => this.snowAt(x, y) > this.snowTh;
       // water test that also works one cell outside the board (the ground and the water run off-screen)
       const isWater = (c, r) => w.water[Math.max(0, Math.min(rows - 1, r)) * cols + Math.max(0, Math.min(cols - 1, c))] === 1;
       this.isWaterAt = (x, y) => isWater(Math.floor(x / C), Math.floor(y / C));
@@ -69,15 +84,20 @@
               if (isWater(c + sx, r) || isWater(c, r + sy) || isWater(c + sx, r + sy)) continue; // keep a shore strip
               if (rnd() > p) continue;
               const kindRoll = rnd();
+              const tx = (c + 0.5) * C + sx * (13 + rnd() * 6), ty = (r + 0.5) * C + sy * (13 + rnd() * 6);
+              const snowy = this.isSnowAt(tx, ty);
               const grove = sample(sak, c, r) > 0.68;
               let kind = 'round', variant = Math.floor(rnd() * PAL.round.length), size = 0.85 + rnd() * 0.3;
-              if (grove && kindRoll < 0.75) { kind = 'sakura'; variant = 0; }
+              if (snowy) { // snowfield: mostly snow-laden evergreens, a few bare-ish round trees and snow mounds
+                if (kindRoll < 0.7) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
+                else if (kindRoll < 0.86) kind = 'round';
+                else { kind = 'bush'; size = 0.8 + rnd() * 0.3; }
+              } else if (grove && kindRoll < 0.75) { kind = 'sakura'; variant = 0; }
               else if (kindRoll < 0.3) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
               else if (kindRoll < 0.42) { kind = 'bush'; variant = Math.floor(rnd() * PAL.round.length); size = 0.8 + rnd() * 0.3; }
               this.trees.push({
-                x: (c + 0.5) * C + sx * (13 + rnd() * 6),
-                y: (r + 0.5) * C + sy * (13 + rnd() * 6),
-                kind, variant, s: size, ph: rnd() * TAU,
+                x: tx, y: ty,
+                kind, variant, s: size, ph: rnd() * TAU, snow: snowy,
                 cell: inBoard ? r * cols + c : -1,
               });
             }
@@ -93,6 +113,22 @@
       for (let i = 0; i < area / 14; i++) this.patches.push({ x: rx(), y: ry(), r: 26 + rnd() * 50, light: rnd() < 0.55 });
       for (let i = 0; i < area * 1.1; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.tufts.push({ x, y, a: (rnd() - 0.5) * 0.9, l: 3 + rnd() * 3 }); }
       for (let i = 0; i < area / 5; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.flowers.push({ x, y, c: PAL.flowers[Math.floor(rnd() * PAL.flowers.length)], r: 1 + rnd() * 0.9 }); }
+
+      // ---- snowfields: soft blobs on a coarse grid (cells well inside a field get big ones, the rim gets small ones), sparkles, drifts
+      this.snowBlobs = []; this.snowSpark = []; this.snowDrift = [];
+      for (let r = -3; r <= rows + 2; r++) {
+        for (let c = -3; c <= cols + 2; c++) {
+          const v = snowF(Math.max(-0.5, Math.min(cols - 0.5, c)), Math.max(-0.5, Math.min(rows - 0.5, r)));
+          if (v <= this.snowTh) continue;
+          const k = Math.min(1, (v - this.snowTh) * 3.2);
+          const x = (c + 0.5) * C, y = (r + 0.5) * C;
+          this.snowBlobs.push({ x: x + (rnd() - 0.5) * 10, y: y + (rnd() - 0.5) * 10, r: C * (0.5 + 0.3 * k) + rnd() * 4 });
+          if (rnd() < 0.8) this.snowSpark.push({ x: x + (rnd() - 0.5) * C, y: y + (rnd() - 0.5) * C, r: 0.8 + rnd() * 0.9 });
+          if (rnd() < 0.35) this.snowDrift.push({ x: x + (rnd() - 0.5) * C, y: y + (rnd() - 0.5) * C, l: 8 + rnd() * 12 });
+        }
+      }
+      this.flakes = [];
+      for (let i = 0; i < 70; i++) this.flakes.push({ u: rnd(), v: rnd(), sp: 6 + rnd() * 10, fall: 22 + rnd() * 22, ph: rnd() * TAU, r: 1 + rnd() * 1.4 });
 
       // ---- water: the "core" of every water cell (flow highlights are clipped to it), streaks and sparkles
       const h = C / 2 - C * 0.3, EXT = 5000;
@@ -144,6 +180,27 @@
         ctx.arc(f.x, f.y, f.r, 0, TAU);
         ctx.fill();
       }
+      // snowfields over the grass: a bluish rim first, then the white
+      if (this.snowBlobs.length) {
+        ctx.fillStyle = PAL.snowShade;
+        ctx.beginPath();
+        for (const b of this.snowBlobs) { ctx.moveTo(b.x + b.r + 3, b.y + 1.5); ctx.arc(b.x, b.y + 1.5, b.r + 3, 0, TAU); }
+        ctx.fill();
+        ctx.fillStyle = PAL.snow;
+        ctx.beginPath();
+        for (const b of this.snowBlobs) { ctx.moveTo(b.x + b.r, b.y); ctx.arc(b.x, b.y, b.r, 0, TAU); }
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(150,185,220,0.55)'; // wind-blown drifts
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const d of this.snowDrift) { ctx.moveTo(d.x, d.y); ctx.quadraticCurveTo(d.x + d.l * 0.5, d.y - 2.5, d.x + d.l, d.y); }
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(190,225,255,0.95)'; // glints
+        ctx.beginPath();
+        for (const p of this.snowSpark) { ctx.moveTo(p.x + p.r, p.y); ctx.arc(p.x, p.y, p.r, 0, TAU); }
+        ctx.fill();
+      }
     }
 
     // ------------------------------------------------------------ sprites
@@ -152,7 +209,7 @@
       if (q !== this.q) { this.q = q; this.sprites = null; }
     }
 
-    makeSprite(kind, variant) {
+    makeSprite(kind, variant, snow) {
       const [W, H] = SIZE[kind];
       const q = this.q;
       const cv = document.createElement('canvas');
@@ -160,37 +217,53 @@
       const c = cv.getContext('2d');
       c.scale(q, q);
       const bx = W / 2, by = H - 6;
-      c.fillStyle = PAL.shadow;
+      c.fillStyle = snow ? PAL.snowShadow : PAL.shadow;
       c.beginPath(); c.ellipse(bx + 2, by + 1, W * 0.3, 4, 0, 0, TAU); c.fill();
       const dot = (x, y, r, col, a) => { c.globalAlpha = a == null ? 1 : a; c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill(); c.globalAlpha = 1; };
       if (kind === 'round' || kind === 'sakura') {
-        const pal = (kind === 'round' ? PAL.round : PAL.sakura)[variant];
+        const pal = snow ? PAL.snowTree : (kind === 'round' ? PAL.round : PAL.sakura)[variant];
         c.fillStyle = PAL.trunk; c.fillRect(bx - 1.6, by - 10, 3.2, 10);
         dot(bx - 7, by - 11, 6.5, pal.dark); dot(bx + 7.5, by - 11.5, 6.5, pal.dark); dot(bx, by - 14, 11.5, pal.dark);
         dot(bx - 1.5, by - 16, 9.8, pal.mid); dot(bx + 5, by - 14, 5.5, pal.mid);
         dot(bx - 4.5, by - 19.5, 5.2, pal.light, 0.9);
         if (kind === 'sakura') { dot(bx + 3, by - 19, 1.6, '#fff', 0.8); dot(bx - 8, by - 12, 1.4, '#fff', 0.7); dot(bx + 8, by - 9, 1.5, '#fff', 0.7); }
+        if (snow) { dot(bx - 1.5, by - 21, 7.6, PAL.snow); dot(bx + 5.5, by - 17.5, 4, PAL.snow); dot(bx - 7.5, by - 16, 3.6, PAL.snow); dot(bx - 3, by - 22.5, 3.4, '#ffffff'); }
       } else if (kind === 'conifer') {
         const pal = PAL.conifer[variant];
         c.fillStyle = PAL.trunk; c.fillRect(bx - 1.4, by - 5, 2.8, 6);
         const tier = (y, hw, hh, col) => { c.fillStyle = col; c.beginPath(); c.moveTo(bx, y - hh); c.lineTo(bx + hw, y); c.lineTo(bx - hw, y); c.closePath(); c.fill(); };
         tier(by - 3, 11.5, 15, pal.dark); tier(by - 12, 9.5, 14, pal.mid); tier(by - 21, 7, 13, pal.mid);
-        c.fillStyle = pal.light; c.globalAlpha = 0.55; c.beginPath(); c.moveTo(bx - 1, by - 33); c.lineTo(bx - 6.5, by - 21.5); c.lineTo(bx - 1, by - 21.5); c.closePath(); c.fill(); c.globalAlpha = 1;
+        if (snow) { // a cap of snow on every tier
+          const cap = (y, hw, hh) => {
+            c.fillStyle = PAL.snow;
+            c.beginPath(); c.moveTo(bx, y - hh); c.lineTo(bx + hw * 0.66, y - hh * 0.36); c.lineTo(bx + hw * 0.3, y - hh * 0.5); c.lineTo(bx + hw * 0.05, y - hh * 0.3);
+            c.lineTo(bx - hw * 0.28, y - hh * 0.5); c.lineTo(bx - hw * 0.66, y - hh * 0.36); c.closePath(); c.fill();
+            c.fillStyle = PAL.snowShade; c.beginPath(); c.moveTo(bx + hw * 0.05, y - hh * 0.3); c.lineTo(bx + hw * 0.3, y - hh * 0.5); c.lineTo(bx + hw * 0.66, y - hh * 0.36); c.lineTo(bx + hw * 0.4, y - hh * 0.3); c.closePath(); c.fill();
+          };
+          cap(by - 3, 11.5, 15); cap(by - 12, 9.5, 14); cap(by - 21, 7, 13);
+        }
+        c.fillStyle = pal.light; c.globalAlpha = snow ? 0 : 0.55; c.beginPath(); c.moveTo(bx - 1, by - 33); c.lineTo(bx - 6.5, by - 21.5); c.lineTo(bx - 1, by - 21.5); c.closePath(); c.fill(); c.globalAlpha = 1;
       } else {
         const pal = PAL.round[variant];
-        dot(bx - 4.5, by - 4, 5.8, pal.dark); dot(bx + 5, by - 4.5, 5.2, pal.dark); dot(bx, by - 7.5, 6.6, pal.mid); dot(bx - 2, by - 9, 3.2, pal.light, 0.85);
+        if (snow) { // a snow-covered shrub: a white mound with a bit of green showing
+          dot(bx - 4.5, by - 4, 5.8, PAL.snowShade); dot(bx + 5, by - 4.5, 5.2, PAL.snowShade); dot(bx, by - 7.5, 6.8, PAL.snow); dot(bx - 2, by - 9, 3.4, '#ffffff');
+          dot(bx + 3.5, by - 2.5, 2.2, PAL.snowTree.dark);
+        } else {
+          dot(bx - 4.5, by - 4, 5.8, pal.dark); dot(bx + 5, by - 4.5, 5.2, pal.dark); dot(bx, by - 7.5, 6.6, pal.mid); dot(bx - 2, by - 9, 3.2, pal.light, 0.85);
+        }
       }
       return { cv, W, H, ax: bx, ay: by };
     }
 
-    sprite(kind, variant) {
+    sprite(kind, variant, snow) {
       if (!this.sprites) this.sprites = {};
-      const key = kind + variant;
-      return this.sprites[key] || (this.sprites[key] = this.makeSprite(kind, variant));
+      const key = kind + variant + (snow ? 's' : '');
+      return this.sprites[key] || (this.sprites[key] = this.makeSprite(kind, variant, snow));
     }
 
     // ------------------------------------------------------------ everything that sits between the ground and the roads
-    drawBehind(ctx, v, t, world) {
+    /** `zoom` = camera zoom (1 = whole map): the trees only sway once the player has zoomed in on them. */
+    drawBehind(ctx, v, t, world, zoom) {
       const dpr = v.dpr;
       this.setScale(dpr * v.scale);
 
@@ -228,7 +301,8 @@
       ctx.restore();
       ctx.globalAlpha = 1;
 
-      // ---- trees (sorted by y, drawn back to front), swaying in the wind
+      // ---- trees (sorted by y, drawn back to front); the wind only moves them when zoomed in (fully from 1.5x)
+      const windAmp = smooth(Math.max(0, Math.min(1, ((zoom || 1) - 1.1) / 0.4)));
       const trees = this.trees;
       const k = dpr * v.scale;
       let lo = 0, hi = trees.length;
@@ -238,8 +312,8 @@
         if (tr.y > y1 + 46) break;
         if (tr.x < x0 || tr.x > x1) continue;
         if (tr.cell >= 0 && (world.bld[tr.cell] || world.island[tr.cell] || world.ringId[tr.cell])) continue; // cleared for a building
-        const sp = this.sprite(tr.kind, tr.variant);
-        const sway = Math.sin(t * 1.15 + tr.ph) * 0.045 + Math.sin(t * 0.35 + tr.x * 0.012) * 0.035;
+        const sp = this.sprite(tr.kind, tr.variant, tr.snow);
+        const sway = windAmp * (Math.sin(t * 1.15 + tr.ph) * 0.045 + Math.sin(t * 0.35 + tr.x * 0.012) * 0.035);
         const sc = k * tr.s;
         ctx.setTransform(sc, 0, sc * sway, sc, (v.ox + tr.x * v.scale) * dpr, (v.oy + tr.y * v.scale) * dpr);
         ctx.drawImage(sp.cv, -sp.ax, -sp.ay, sp.W, sp.H);
@@ -249,27 +323,38 @@
 
     // ------------------------------------------------------------ the sky: cloud shadows, clouds, petals (screen space)
     makeClouds(dpr) {
+      // cartoon clouds: round bumps sitting on a flat, rounded base, a soft outline and a pale-blue underside
+      const SHAPES = [
+        [[0.2, 0.11], [0.36, 0.17], [0.56, 0.21], [0.76, 0.14]],
+        [[0.16, 0.1], [0.32, 0.15], [0.5, 0.2], [0.68, 0.15], [0.84, 0.1]],
+        [[0.26, 0.15], [0.5, 0.23], [0.72, 0.15]],
+      ];
       const mk = (shadow, variant) => {
-        const W = 260, H = 130;
+        const W = 260, H = 130, base = H * 0.82;
         const cv = document.createElement('canvas');
         cv.width = Math.ceil(W * dpr); cv.height = Math.ceil(H * dpr);
         const c = cv.getContext('2d');
         c.scale(dpr, dpr);
-        const sets = [
-          [[0.28, 0.62, 0.2], [0.44, 0.48, 0.26], [0.62, 0.56, 0.23], [0.78, 0.66, 0.16], [0.16, 0.72, 0.13]],
-          [[0.22, 0.6, 0.18], [0.4, 0.5, 0.22], [0.55, 0.42, 0.2], [0.7, 0.55, 0.24], [0.86, 0.68, 0.14]],
-          [[0.3, 0.66, 0.2], [0.5, 0.5, 0.3], [0.72, 0.64, 0.2]],
-        ][variant];
-        for (const [fx, fy, fr] of sets) {
-          const x = fx * W, y = fy * H, r = fr * W;
-          const g = c.createRadialGradient(x, y, r * 0.15, x, y, r);
-          const col = shadow ? '28,70,48' : '255,255,255';
-          g.addColorStop(0, `rgba(${col},0.95)`);
-          g.addColorStop(0.55, `rgba(${col},0.65)`);
-          g.addColorStop(1, `rgba(${col},0)`);
-          c.fillStyle = g;
-          c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill();
-        }
+        const bumps = SHAPES[variant].map(([fx, fr]) => [fx * W, base - fr * W * 0.9, fr * W]);
+        const left = bumps[0][0] - bumps[0][2] * 0.9, right = bumps[bumps.length - 1][0] + bumps[bumps.length - 1][2] * 0.9;
+        const outline = () => {
+          c.beginPath();
+          for (const [x, y, r] of bumps) { c.moveTo(x + r, y); c.arc(x, y, r, 0, TAU); }
+          c.moveTo(left + 10, base - 22);
+          c.arcTo(right, base - 22, right, base, 11); c.arcTo(right, base, left, base, 11); c.arcTo(left, base, left, base - 22, 11); c.arcTo(left, base - 22, right, base - 22, 11);
+          c.closePath();
+        };
+        if (shadow) { c.fillStyle = 'rgb(28,70,48)'; outline(); c.fill(); return { cv, W, H }; }
+        c.lineJoin = 'round';
+        c.strokeStyle = '#9dbbdb'; c.lineWidth = 6; outline(); c.stroke(); // outline (only the outer edge survives the white fill)
+        c.fillStyle = '#ffffff'; outline(); c.fill();
+        c.save(); outline(); c.clip(); // pale blue underside
+        c.fillStyle = '#d9e8f7';
+        c.fillRect(0, base - 11, W, 14);
+        c.restore();
+        c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 3; c.lineCap = 'round'; // a little highlight on the biggest bump
+        const [hx, hy, hr] = bumps.reduce((a, b) => (b[2] > a[2] ? b : a));
+        c.beginPath(); c.arc(hx, hy, hr * 0.72, Math.PI * 1.1, Math.PI * 1.45); c.stroke();
         return { cv, W, H };
       };
       return { cloud: [0, 1, 2].map((i) => mk(false, i)), shadow: [0, 1, 2].map((i) => mk(true, i)) };
@@ -285,9 +370,9 @@
         const w = sh.W * cl.s, h = sh.H * cl.s, span = v.w + 2 * w;
         const x = mod(cl.u * span + t * cl.sp - par(v.ox), span) - w;
         const y = cl.v * v.h - par(v.oy) - h / 2;
-        ctx.globalAlpha = 0.11; // kept faint: a cloud must never hide a house or a pin
+        ctx.globalAlpha = 0.06; // kept faint: a cloud must never hide a house or a pin
         ctx.drawImage(sh.cv, x + w * 0.16, y + 34 * cl.s, w, h);
-        ctx.globalAlpha = 0.27;
+        ctx.globalAlpha = 0.21;
         ctx.drawImage(cd.cv, x, y, w, h);
       }
       // petals drifting in the breeze
@@ -295,6 +380,7 @@
       for (const p of this.petals) {
         const x = mod(p.u * v.w + t * p.sp + Math.sin(t * 0.7 + p.ph) * 12, v.w + 20) - 10;
         const y = mod(p.v * v.h + t * p.fall, v.h + 20) - 10;
+        if (this.isSnowAt((x - v.ox) / v.scale, (y - v.oy) / v.scale)) continue; // no cherry blossom in the snow
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(t * 1.3 + p.ph);
@@ -302,6 +388,15 @@
         ctx.fillStyle = '#f9c3d4';
         ctx.beginPath(); ctx.ellipse(0, 0, 3.4, 2.1, 0, 0, TAU); ctx.fill();
         ctx.restore();
+      }
+      // snowflakes, only over the snowfields
+      ctx.fillStyle = '#ffffff';
+      for (const f of this.flakes) {
+        const x = mod(f.u * v.w + t * f.sp + Math.sin(t * 0.9 + f.ph) * 14, v.w + 20) - 10;
+        const y = mod(f.v * v.h + t * f.fall, v.h + 20) - 10;
+        if (!this.isSnowAt((x - v.ox) / v.scale, (y - v.oy) / v.scale)) continue;
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.arc(x, y, f.r, 0, TAU); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
