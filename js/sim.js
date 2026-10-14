@@ -48,10 +48,14 @@
       this.invincibleUntil = 0; // game time until which the mayor's order protects the city from collapsing
       this.mayorActive = false; // true from the moment the mayor's order is finished until its window has been judged
       this.mayorUses = 0;
+      this.blessed = false; // Kayray's blessing: invincible for good (until the player restarts)
+      this.portalsGiven = 0; // pairs of teleport portals handed out so far (one per CFG.PORTAL_EVERY delivered cars)
+      this.portalSeq = 0;
+      this.portalQueue = []; // styles ('blue' | 'door') of the pairs in stock, in the order they will be placed
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0 };
+      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0 };
       this.bigs = new Map(); // big roundabouts: id -> {id, center, nodes[8] in circulation order}
       this.bigSeq = 0;
       this.nextId = 1;
@@ -171,6 +175,7 @@
       if (!w.adjacent(a, b)) return { ok: false, reason: 'adj' };
       if (w.bld[a] && w.bld[b]) return { ok: false, reason: 'bld' };
       if (w.island[a] || w.island[b]) return { ok: false, reason: 'island' };
+      if (w.portal.has(a) || w.portal.has(b)) return { ok: false, reason: 'tpend' }; // a portal sits at the very end of a road
       const dir = w.dirOf(a, b);
       if (w.tun.has(a * 4 + dir) || w.tun.has(b * 4 + ((dir + 2) & 3))) return { ok: false, reason: 'tunnel' };
       const cur = w.rawBetween(a, b) & 3;
@@ -218,6 +223,7 @@
       else if (w.isBridgeEdge(a, b)) this.inv.bridge++;
       w.setEdge(a, b, 0);
       this.cleanFeatures([a, b]);
+      this.cleanPortals([a, b]);
       this.validateCars();
       this.events.push({ type: 'erase' });
       return { ok: true };
@@ -272,7 +278,7 @@
       if (col < 1 || row < 1 || col > w.cols - 2 || row > w.rows - 2) return 'edge';
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const n = (row + dy) * w.cols + col + dx;
-        if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n] || w.feat[n] || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return 'blocked';
+        if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n] || w.feat[n] || w.portal.has(n) || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return 'blocked';
       }
       return null;
     }
@@ -342,7 +348,7 @@
       const len = Math.abs(w.col(a) - w.col(b)) + Math.abs(w.row(a) - w.row(b));
       if (len < CFG.TUNNEL_MIN) return 'short';
       if (len > CFG.TUNNEL_MAX) return 'long';
-      for (const n of [a, b]) if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n]) return 'portal';
+      for (const n of [a, b]) if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n] || w.portal.has(n)) return 'portal';
       if (w.incident(a, d) || w.incident(b, (d + 2) & 3)) return 'busy';
       return null;
     }
@@ -387,6 +393,71 @@
         for (let k = 0; k <= t.len; k++) if (a + k * step[d] === n) return this.removeTunnel(a, d);
       }
       return false;
+    }
+
+    // ---- teleport portals: a directed pair. Cars that drive into the entrance (the end of a road) come out of the exit (the end of
+    //      another road), wherever it is. Both sit on the dead end of a road; the pair is a free jump edge in the route graph.
+    /** Why a portal cannot go on n ('node' / 'notend' / 'taken'), or null if it can. */
+    checkPortal(n) {
+      const w = this.world;
+      if (n < 0 || n >= w.n || w.water[n] || w.bld[n] || w.feat[n] || w.ringId[n] || w.island[n]) return 'node';
+      if (w.portal.has(n)) return 'taken';
+      if (w.deg(n) !== 1 || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return 'notend';
+      return null;
+    }
+
+    /** Style of the next pair that will be placed ('blue' = Diablo-style portal, 'door' = Doraemon's anywhere door), or null. */
+    nextPortalStyle() { return this.portalQueue.length ? this.portalQueue[0] : null; }
+
+    addPortal(a, b) {
+      const w = this.world;
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
+      if (a === b) return { ok: false, reason: 'same' };
+      const bad = this.checkPortal(a) || this.checkPortal(b);
+      if (bad) return { ok: false, reason: bad };
+      if (this.inv.tp <= 0 || !this.portalQueue.length) return { ok: false, reason: 'none' };
+      const style = this.portalQueue.shift();
+      this.inv.tp--;
+      const id = ++this.portalSeq;
+      w.portal.set(a, { id, kind: 'in', style, mate: b });
+      w.portal.set(b, { id, kind: 'out', style, mate: a });
+      w.tp.set(a, b);
+      this.events.push({ type: 'place', node: a });
+      this.events.push({ type: 'place', node: b });
+      return { ok: true };
+    }
+
+    /** Remove the pair that has a portal at n (the pair goes back into stock). */
+    removePortal(n) {
+      const w = this.world;
+      const p = w.portal.get(n);
+      if (!p || !this.canEdit()) return false;
+      const entrance = p.kind === 'in' ? n : p.mate;
+      w.tp.delete(entrance);
+      w.portal.delete(n);
+      w.portal.delete(p.mate);
+      this.portalQueue.unshift(p.style);
+      this.inv.tp++;
+      this.validateCars();
+      this.events.push({ type: 'erase' });
+      return true;
+    }
+
+    /** A portal needs the single road it sits at the end of: drop pairs whose end lost it (or got a second road). */
+    cleanPortals(nodes) {
+      const w = this.world;
+      for (const n of nodes) if (w.portal.has(n) && w.deg(n) !== 1) this.removePortal(n);
+    }
+
+    /** Hand out the pairs earned so far: one per CFG.PORTAL_EVERY delivered cars, alternating the two looks. */
+    grantPortals() {
+      while (this.portalsGiven < Math.floor(this.score / CFG.PORTAL_EVERY)) {
+        const style = this.portalsGiven % 2 === 0 ? 'blue' : 'door';
+        this.portalsGiven++;
+        this.portalQueue.push(style);
+        this.inv.tp++;
+        this.events.push({ type: 'portalgift', style });
+      }
     }
 
     // ------------------------------------------------------------ routing
@@ -476,6 +547,16 @@
             this._hpush(nd, ns);
           }
         }
+        const x = w.tp.get(u); // a portal entrance: jump to its exit (the car leaves it with no fixed heading)
+        if (x !== undefined) {
+          const ns = x * 5 + 4;
+          const nd = du + CFG.PORTAL_COST;
+          if (nd < dist[ns]) {
+            dist[ns] = nd;
+            prev[ns] = st;
+            this._hpush(nd, ns);
+          }
+        }
       }
       return null;
     }
@@ -522,7 +603,7 @@
       if (cnt[0] !== cnt[1]) return cnt[0] < cnt[1] ? 0 : 1;
       const w = this.world, p = car.path;
       const b = nl >> 2, i = p.indexOf(b, car.i);
-      if (i >= 0 && p[i + 2] !== undefined) {
+      if (i >= 0 && p[i + 2] !== undefined && w.tp.get(p[i + 1]) !== p[i + 2]) {
         const turn = (w.dirOf(p[i + 1], p[i + 2]) - w.dirOf(b, p[i + 1]) + 4) & 3; // 1 = right turn, 3 = left turn
         if (turn === 1) return 1; // the outer (kerb) lane
         if (turn === 3) return 0; // the inner lane
@@ -665,6 +746,7 @@
       const i = car.i;
       const a = p[i], b = p[i + 1];
       const last = i + 1 === p.length - 1;
+      const hop = !last && p[i + 3] !== undefined && w.tp.get(b) === p[i + 2]; // the lane ends in a portal entrance
       const len = this.lenOf(car.lane); // lane length in cells; s runs 0..1 along it
       const wideLane = this.slotsOf(car.lane) > 1;
       const gapS = this.gapOf(car.lane) / len;
@@ -676,12 +758,12 @@
         maxS = Math.min(maxS, o.s - gapS);
         break;
       }
-      if (!last && car.nslotFor !== b * 4 + w.dirOf(b, p[i + 2])) { // choose the slot for the next lane (the junction may overrule it)
+      if (!last && !hop && car.nslotFor !== b * 4 + w.dirOf(b, p[i + 2])) { // choose the slot for the next lane (the junction may overrule it)
         const nl0 = b * 4 + w.dirOf(b, p[i + 2]);
         car.nslot = this.pickSlot(car, nl0);
         car.nslotFor = nl0;
       }
-      if (!last && car.held !== b && w.isJunction(b)) {
+      if (!last && !hop && car.held !== b && w.isJunction(b)) {
         const base = w.feat[b] === 2 || w.ringId[b] ? 0.72 : CFG.STOP;
         const stop = 1 - (1 - base) / len;
         if (car.s >= stop - 0.04 / len && this.tryAcquire(car, b)) car.held = b;
@@ -714,6 +796,25 @@
           this.deliver(car);
           return;
         }
+        if (hop) { // through the portal: reappear at the start of the lane leaving the exit
+          const x = p[i + 2], q = p[i + 3];
+          const xl = x * 4 + w.dirOf(x, q);
+          if (!this.laneClear(xl, CFG.GAP * 1.1)) { car.s = 1; return; }
+          car.pslot = car.slot | 0;
+          car.slot = 0;
+          car.nslotFor = -1;
+          car.i += 2;
+          car.s = 0;
+          car.lane = xl;
+          car.hopAt = this.time;
+          let l = this.lanes.get(xl);
+          if (!l) this.lanes.set(xl, (l = []));
+          l.push(car);
+          this.events.push({ type: 'teleport', from: b, to: x });
+          const nxt = car.path[car.i + 1];
+          if (car.i + 1 < car.path.length - 1 && w.isJunction(nxt)) this.replan(car);
+          return;
+        }
         const c = p[i + 2];
         const nl = b * 4 + w.dirOf(b, c);
         let ns = car.nslotFor === nl ? car.nslot | 0 : 0;
@@ -743,6 +844,7 @@
       car.dest.pins = Math.max(0, car.dest.pins - 1);
       car.dest.inbound = Math.max(0, (car.dest.inbound || 0) - 1);
       this.score++;
+      this.grantPortals();
       this.events.push({ type: 'deliver', color: car.color, node: car.dest.node });
     }
 
@@ -825,7 +927,7 @@
       }
 
       // overflow
-      const shielded = this.time < this.invincibleUntil;
+      const shielded = this.blessed || this.time < this.invincibleUntil;
       // the mayor's order has run out: if some destination is still choked, the city is lost for good
       if (this.mayorActive && !shielded) {
         this.mayorActive = false;
@@ -905,6 +1007,17 @@
       this.invincibleUntil = this.time + CFG.MAYOR_SECONDS;
       this.mayorActive = true;
       this.events.push({ type: 'mayorgo' });
+      return true;
+    }
+
+    /** 召喚 Kayray 的祝福: after the final failure, the city becomes invincible until the player restarts. */
+    kayrayBlessing() {
+      if (this.state !== 'over' || !this.over || !this.over.final) return false;
+      this.state = 'running';
+      this.blessed = true;
+      this.mayorActive = false;
+      this.over = null;
+      this.events.push({ type: 'kayray' });
       return true;
     }
 

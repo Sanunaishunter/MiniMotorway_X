@@ -56,6 +56,21 @@ function useInventory(g, rnd) {
     const n = Math.floor(rnd() * w.n);
     if (w.deg(n) > 0 || w.deg(w.nbGrid(n, 0) < 0 ? n : w.nbGrid(n, 0)) > 0) g.placeBig(n);
   }
+  // teleport portals: grow a short dead-end spur off two random roads, then put the pair on the spur ends
+  if (g.inv.tp > 0) {
+    const spur = () => {
+      for (let k = 0; k < 60; k++) {
+        const r = Math.floor(rnd() * w.n);
+        if (w.bld[r] || w.water[r] || w.deg(r) < 2 || w.portal.has(r)) continue;
+        const m = w.nbGrid(r, Math.floor(rnd() * 4));
+        if (m < 0 || w.water[m] || w.bld[m] || w.deg(m) > 0) continue;
+        if (g.addEdge(r, m, 1).ok) return m;
+      }
+      return -1;
+    };
+    const a = spur(), b = spur();
+    if (a >= 0 && b >= 0) g.addPortal(a, b);
+  }
   // widen random stretches into four-lane roads
   for (let n = 0; n < w.n && g.inv.wide > 0; n++) {
     const e = w.nb(n, 1);

@@ -21,6 +21,8 @@
     TOW_ANY: 120, // seconds any car may be stuck before it is towed
     PIN_LIMIT: 7, // pins at a destination before the overflow timer starts
     OVERFLOW_TIME: 16, // seconds the overflow meter needs to fill
+    PORTAL_EVERY: 100, // every this many delivered cars the player is given one pair of teleport portals
+    PORTAL_COST: 0.25, // routing cost (about the time in seconds-ish of a quarter cell) of stepping through a portal
     MAYOR_SECONDS: 300, // 市長的命令: how long (game seconds, 5 minutes) the city is invincible once the roads have been rebuilt
     DAY_SECONDS: 150, // length of one day / night cycle in the 晝夜交替 mode (game seconds, two weeks)
     LIGHT_PERIOD: 3.6,
@@ -66,6 +68,8 @@
       this.eEw = new Uint8Array(n); // 1 = the road edge n -> n+1 has four lanes (two per direction)
       this.eSw = new Uint8Array(n); // 1 = the road edge n -> n+cols has four lanes
       this.tun = new Map(); // tunnels: lane id (node*4+dir) -> {to, len}; stored for both ends
+      this.portal = new Map(); // teleport portals: node -> {id, kind: 'in' | 'out', style: 'blue' | 'door', mate}
+      this.tp = new Map(); // entrance node -> exit node (a car that drives into the entrance comes out at the exit)
       this.feat = new Uint8Array(n); // 0 none, 1 traffic light, 2 roundabout, 3 overpass
       this.ringId = new Int16Array(n); // big roundabout the node is part of (id+1), else 0
       this.island = new Int16Array(n); // big roundabout whose centre island this is (id+1), else 0
@@ -133,6 +137,9 @@
       return (ow === 1) === forward ? raw & 3 : 0;
     }
 
+    /** True if node n carries a teleport portal (an entrance or an exit). */
+    isPortal(n) { return this.portal.has(n); }
+
     /** True if any road, tunnel or one-way edge touches n in direction d. */
     incident(n, d) {
       return this.tun.has(n * 4 + d) || this.rawE(n, d) > 0;
@@ -140,6 +147,7 @@
 
     /** Traversable edge type from a to its graph neighbour b (a -> b), else 0. */
     edgeBetween(a, b) {
+      if (this.tp.get(a) === b) return 4; // the jump through a teleport portal
       const d = this.dirOf(a, b);
       if (d < 0 || this.nb(a, d) !== b) return 0;
       return this.edge(a, d);

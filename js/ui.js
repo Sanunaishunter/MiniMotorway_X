@@ -59,7 +59,7 @@
       o.start(t0);
       o.stop(t0 + dur + 0.02);
     }
-    let lastDeliver = 0;
+    let lastDeliver = 0, lastTele = 0;
     return {
       unlock() { ctx(); },
       deliver(color) {
@@ -77,6 +77,14 @@
       deny() { tone(150, 0.14, 'square', 0.03); },
       mayor() { [660, 880, 660, 880].forEach((f, i) => tone(f, 0.16, 'triangle', 0.045, i * 0.14)); },
       click() { tone(500, 0.05, 'triangle', 0.04); },
+      teleport() {
+        const now = performance.now();
+        if (now - lastTele < 90) return;
+        lastTele = now;
+        tone(420, 0.16, 'sine', 0.035, 0, 1300);
+      },
+      gift() { [784, 988, 1319].forEach((f, i) => tone(f, 0.22, 'sine', 0.05, i * 0.08)); },
+      kayray() { [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.42, 'triangle', 0.05, i * 0.11)); },
     };
   })();
 
@@ -115,12 +123,14 @@
     ui.overShown = false;
     ui.overTimer = 0;
     mayorSig = '';
+    mayorBar.classList.add('hidden'); // a banner left over from the previous game
     renderer.setGame(ui.game);
     renderer.tool = ui.tool;
     stroke = null;
     renderer.preview = null;
     pointers.clear(); gesture = null; panning = null;
     unlockedTools.clear();
+    setTpFirst(-1);
     hud.inv = '';
     if (ui.tool !== 'road') setTool('road');
   }
@@ -144,6 +154,12 @@
     tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
     big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
   };
+
+  const TP_ICONS = {
+    blue: '<ellipse cx="16" cy="17" rx="10.5" ry="13.5" fill="#6c778c" stroke="none"/><ellipse cx="16" cy="17" rx="8" ry="11" fill="#2f7cf0" stroke="none"/><ellipse cx="16" cy="17" rx="4.2" ry="6.4" fill="#d6f4ff" stroke="none"/><path d="M9.5 14c3-5 11-4 12.5 1M22 20c-3 5-11 4-12.5-1" fill="none" stroke="#fff" stroke-width="1.7"/>',
+    door: '<rect x="7" y="2.5" width="18" height="27" rx="3" fill="#d2457c" stroke="none"/><rect x="9.2" y="4.7" width="13.6" height="22.6" rx="1.8" fill="#ff9ec0" stroke="none"/><rect x="11.2" y="6.7" width="9.6" height="7.6" rx="1.2" fill="#ffc3d8" stroke="none"/><rect x="11.2" y="16" width="9.6" height="9" rx="1.2" fill="#ffc3d8" stroke="none"/><circle cx="20" cy="16" r="1.7" fill="#ffd23f" stroke="none"/>',
+  };
+  UP_ICONS.tp = '<svg viewBox="0 0 32 32">' + TP_ICONS.blue + '</svg>';
 
   function colorDots(n) {
     let h = '<div class="dots">';
@@ -245,8 +261,20 @@
       <p>${final ? '無敵時間結束了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
       <div class="big">${g.score}</div>
       <p>輛車成功送達 · 撐到第 ${g.week} 週${newBest ? ' · <b style="color:#e8590c">新紀錄!</b>' : ` · 最高 ${ui.best}`}</p>
-      <button class="btn" id="mAgain">再玩一次</button>`);
+      ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止。</p>' : ''}
+      <button class="btn" id="mAgain">${final ? '重來' : '再玩一次'}</button>${final ? '<button class="btn gold" id="mKayray">召喚 Kayray 的祝福</button>' : ''}`);
     $('mAgain').onclick = () => { restart(); };
+    if (final) {
+      $('mKayray').onclick = () => {
+        if (!g.kayrayBlessing()) return;
+        sfx.kayray();
+        hideModal();
+        ui.mode = 'play';
+        ui.overShown = false;
+        ui.overTimer = 0;
+        toast('Kayray 的祝福降臨:無限無敵,直到你重新開始');
+      };
+    }
   }
 
   /** Banner in the map area: "finished?" button while the clock is frozen, then the invincibility countdown. */
@@ -257,6 +285,9 @@
     if (g.state === 'mayor') {
       sig = 'mayor';
       text = '市長的命令:時間暫停中,請重新規劃道路';
+    } else if (g.blessed) {
+      sig = 'blessed';
+      text = 'Kayray 的祝福 · 無限無敵';
     } else if (g.shieldLeft() > 0) {
       const t = Math.ceil(g.shieldLeft());
       sig = 'shield' + t;
@@ -265,7 +296,8 @@
     if (sig === mayorSig) return;
     mayorSig = sig;
     mayorBar.classList.toggle('hidden', !sig);
-    mayorBar.classList.toggle('shield', sig.startsWith('shield'));
+    mayorBar.classList.toggle('shield', sig.startsWith('shield') || sig === 'blessed');
+    mayorBar.classList.toggle('blessed', sig === 'blessed');
     $('mayorText').textContent = text;
   }
   $('mayorDone').onclick = () => {
@@ -285,6 +317,7 @@
 
   // ---------------------------------------------------------------- tools & input
   function setTool(t) {
+    if (t !== ui.tool) setTpFirst(-1);
     ui.tool = t;
     renderer.tool = t;
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
@@ -293,7 +326,8 @@
     b.addEventListener('click', () => { sfx.unlock(); sfx.click(); setTool(b.dataset.tool); });
   });
 
-  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big'];
+  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'tp'];
+  function setTpFirst(n) { ui.tpFirst = n; renderer.tpFirst = n; }
   let stroke = null;
   let lastDeny = 0;
   const DENY_TEXT = {
@@ -306,7 +340,11 @@
     line: '入口和出口要在同一條直線上',
     short: '隧道至少要 2 格長',
     long: '隧道最長 6 格',
-    portal: '隧道的入口與出口不能在水面或建築上',
+    portal: '隧道的入口與出口不能在水面、建築或傳送門上',
+    notend: '傳送門要放在馬路的盡頭(只接一條路的路端)',
+    taken: '這裡已經有傳送門了',
+    same: '入口和出口要選不同的地方',
+    node: '這裡不能放傳送門',
     busy: '入口朝隧道的那一側不能已經有道路',
   };
   function denyFor(reason) { if (DENY_TEXT[reason]) deny(DENY_TEXT[reason]); }
@@ -360,6 +398,24 @@
     else if (r.reason === 'wide-ring') deny('這段路不能拓寬');
     else if (r.reason === 'island') deny('圓環中央是綠地,不能在這裡鋪路');
     else if (r.reason === 'tunnel') deny('隧道入口的這一側不能鋪路');
+    else if (r.reason === 'tpend') deny('傳送門在路的盡頭,不能再接路(先用橡皮擦拆掉傳送門)');
+  }
+
+  /** Portal tool: the first tap on a road end is the entrance, the second the exit. */
+  function pickPortal(g, n) {
+    if (g.inv.tp <= 0) { deny('傳送門用完了:每送達 100 輛車可獲得一對'); return; }
+    if (ui.tpFirst == null || ui.tpFirst < 0) {
+      const bad = g.checkPortal(n);
+      if (bad) { denyFor(bad); return; }
+      setTpFirst(n);
+      sfx.click();
+      toast('入口已選好,再點另一條路的盡頭當出口');
+      return;
+    }
+    if (n === ui.tpFirst) { setTpFirst(-1); toast('已取消'); return; }
+    const r = g.addPortal(ui.tpFirst, n);
+    if (r.ok) { setTpFirst(-1); sfx.place(); toast('傳送門完成:車子從入口進去,由出口出來'); }
+    else denyFor(r.reason);
   }
 
   // ---- camera: two fingers pan + pinch-zoom (touch), wheel zoom + middle-button drag (mouse)
@@ -403,13 +459,16 @@
       if (r.ok) sfx.place();
       else denyFor(r.reason);
       stroke = null;
+    } else if (tool === 'tp') {
+      pickPortal(g, n);
+      stroke = null;
     } else if (tool === 'tun') {
       stroke.target = -1;
       renderer.preview = null;
     } else if (tool === 'erase') {
       const w = g.world;
       // a click removes a placed feature, the whole big roundabout (click its green island) or a tunnel (click a portal)
-      if (g.removeFeature(n) || (w.island[n] && g.removeBigAt(n)) || g.removeTunnelAt(n, true)) sfx.erase();
+      if (g.removeFeature(n) || (w.island[n] && g.removeBigAt(n)) || g.removeTunnelAt(n, true) || g.removePortal(n)) sfx.erase();
     }
   });
 
@@ -549,7 +608,7 @@
   };
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    const map = { 1: 'road', 2: 'hw', 3: 'wide', 4: 'light', 5: 'round', 6: 'ovp', 7: 'tun', 8: 'erase' };
+    const map = { 1: 'road', 2: 'hw', 3: 'wide', 4: 'light', 5: 'round', 6: 'ovp', 7: 'tun', 8: 'erase', 9: 'tp' };
     const btn = map[e.key] && document.querySelector(`[data-tool="${map[e.key]}"]`);
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
@@ -586,7 +645,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'tp']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {
@@ -600,10 +659,11 @@
     if (hud.day !== d) { hud.day = d; $('dayName').textContent = '週' + DAYS[d]; }
     const f = Math.round((g.weekTime / MM.CFG.WEEK_SECONDS) * 1000) / 10;
     if (hud.fill !== f) { hud.fill = f; $('weekFill').style.width = f + '%'; }
-    const sig = OPTIONAL_TOOLS.map((k) => g.inv[k]).join('|') + '|' + g.inv.bridge;
+    const sig = OPTIONAL_TOOLS.map((k) => g.inv[k]).join('|') + '|' + g.inv.bridge + '|' + g.nextPortalStyle();
     if (sig !== hud.inv) {
       hud.inv = sig;
       $('cntBridge').textContent = g.inv.bridge;
+      $('icoTp').innerHTML = TP_ICONS[g.nextPortalStyle() || 'blue'];
       for (const k of OPTIONAL_TOOLS) {
         const btn = document.querySelector(`[data-tool="${k}"]`);
         if (g.inv[k] > 0) unlockedTools.add(k); // a tool shows up the first time you own one
@@ -625,6 +685,11 @@
       else if (e.type === 'spawn' && g.time > 1) sfx.spawn();
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
       else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');
+      else if (e.type === 'teleport') sfx.teleport();
+      else if (e.type === 'portalgift') {
+        sfx.gift();
+        toast(`送達 ${g.score} 輛!獲得一對${e.style === 'blue' ? '藍色傳送門' : '任意門'}(工具列「傳送門」)`);
+      }
     }
   }
 

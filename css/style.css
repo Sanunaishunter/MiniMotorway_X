@@ -172,6 +172,7 @@ html, body {
 #mayorBar.shield { padding: 6px 14px; background: rgba(46, 125, 90, 0.92); pointer-events: none; }
 #mayorBar .btn { margin: 0; padding: 7px 16px; font-size: 14px; border-radius: 99px; background: #ffd24d; color: #2f3a4b; box-shadow: none; }
 #mayorBar.shield .btn { display: none; }
+#mayorBar.blessed { background: rgba(176, 124, 20, 0.94); }
 #mayorBar .time { font-variant-numeric: tabular-nums; }
 
 /* ---------- modal ---------- */
@@ -216,6 +217,7 @@ html, body {
   box-shadow: 0 6px 14px rgba(47, 58, 75, 0.3);
 }
 .btn:active { transform: scale(0.96); }
+.btn.gold { background: linear-gradient(180deg, #ffd96b, #f4b01e); color: #4a3200; margin-left: 8px; }
 .btn.alt { background: #e8e4d4; color: var(--ink); box-shadow: none; margin-left: 8px; }
 .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
 .choice {

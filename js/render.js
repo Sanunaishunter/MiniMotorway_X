@@ -48,6 +48,7 @@
       this.hover = -1;
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
+      this.tpFirst = -1; // node of the portal entrance that has been picked while the exit is still to be chosen
       this.scn = null; // decorative scenery (trees, flowing water, clouds)
       this.police = null; // decorative traffic police cars
       this.timeMode = 'cycle'; // 'day' | 'night' | 'cycle': the sky is always bright, always dark, or follows the day / night cycle
@@ -217,8 +218,10 @@
       const dx = Math.sign(bx - ax), dy = Math.sign(by - ay);
       const out = this._pose;
       const nx = -dy, ny = dx;
-      const c = p[i + 2], pr = p[i - 1];
       const g = this.game, w = g.world;
+      // a teleport hop in the path is not a drive: the car neither turns into nor out of it
+      const c = w.tp.get(b) === p[i + 2] ? undefined : p[i + 2];
+      const pr = w.tp.get(p[i - 1]) === a ? undefined : p[i - 1];
       // lateral offset of the lane the car is in / is about to enter / came from (a four-lane road has an inner and an outer lane)
       const offCur = this.laneOff(car.lane, car.slot);
       const nlane = c !== undefined ? b * 4 + w.dirOf(b, c) : -1;
@@ -270,6 +273,15 @@
       return 0;
     }
 
+    /** Size factor of a car: it shrinks into a portal entrance and grows back out of the exit. */
+    carScale(car) {
+      const g = this.game, p = car.path, i = car.i;
+      let k = 1;
+      if (car.hopAt !== undefined) k = Math.min(1, 0.25 + (g.time - car.hopAt) / 0.35);
+      if (g.world.tp.get(p[i + 1]) === p[i + 2] && p[i + 2] !== undefined && car.s > 0.72) k = Math.min(k, Math.max(0.2, 1 - (car.s - 0.72) / 0.28 * 0.8));
+      return k;
+    }
+
     /** Cosmetic body style, picked from the car id (never affects the simulation). */
     carKind(car) { return CAR_KINDS[((car.id * 2654435761) >>> 0) % CAR_KINDS.length]; }
 
@@ -281,6 +293,8 @@
       ctx.translate(pose.x, pose.y - (elevated ? 3 : 0));
       ctx.rotate(pose.a);
       if (elevated) ctx.scale(1.12, 1.12);
+      const ks = this.carScale(car);
+      if (ks < 1) ctx.scale(ks, ks);
       ctx.fillStyle = elevated ? 'rgba(20,30,50,0.28)' : 'rgba(0,0,0,0.18)';
       rr(ctx, -5.8, elevated ? 0.4 : -2.8, 12.4, 7, 2.2);
       ctx.fill();
@@ -458,6 +472,10 @@
         const a = key >> 2, d = key & 3;
         this.glow(ctx, '255,174,58', this.nodeX(a) + MM.DX[d] * 9, this.nodeY(a) + MM.DY[d] * 9, 18, 0.9 * k);
       }
+      for (const [n, pt] of w.portal) { // teleport portals glow in their own colour all the time, brighter in the dark
+        const blue = pt.style === 'blue';
+        this.glow(ctx, blue ? '70,160,255' : '255,150,190', this.nodeX(n), this.nodeY(n) - 5, 30, (0.35 + 0.65 * k) * (0.85 + 0.15 * Math.sin(now / 260 + n)));
+      }
       // buildings: windows glow warm, destinations glow in their colour
       for (const b of g.buildings) {
         const x = this.nodeX(b.node), y = this.nodeY(b.node);
@@ -586,6 +604,107 @@
           ctx.strokeStyle = '#fff';
           ctx.stroke();
         }
+      }
+    }
+
+    // ------------------------------------------------------------ teleport portals
+    /** Diablo-style town portal: a blue vortex in a stone ring, swirling. */
+    drawBluePortal(ctx, x, y, now, exit) {
+      const t = now / 1000;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath(); ctx.ellipse(1, 12, 11, 3.6, 0, 0, 6.2832); ctx.fill();
+      const cy = -4, rx = 9.5, ry = 15;
+      ctx.fillStyle = '#4b5568'; // stone ring
+      ctx.beginPath(); ctx.ellipse(0, cy, rx + 2.6, ry + 2.6, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#6c778c';
+      ctx.beginPath(); ctx.ellipse(0, cy - 0.8, rx + 1.6, ry + 1.6, 0, 0, 6.2832); ctx.fill();
+      const gr = ctx.createRadialGradient(0, cy, 1, 0, cy, ry);
+      gr.addColorStop(0, '#f2fcff');
+      gr.addColorStop(0.35, '#8fe0ff');
+      gr.addColorStop(0.75, '#2f7cf0');
+      gr.addColorStop(1, '#173ea8');
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.ellipse(0, cy, rx, ry, 0, 0, 6.2832); ctx.fill();
+      ctx.save(); // the swirl: arcs spinning around the centre, clipped to the oval
+      ctx.beginPath(); ctx.ellipse(0, cy, rx, ry, 0, 0, 6.2832); ctx.clip();
+      ctx.translate(0, cy);
+      ctx.scale(rx / ry, 1);
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 3; k++) {
+        const a0 = t * (exit ? -2.4 : 2.4) + k * 2.0944;
+        ctx.strokeStyle = `rgba(255,255,255,${0.75 - k * 0.12})`;
+        ctx.lineWidth = 1.7;
+        ctx.beginPath(); ctx.arc(0, 0, ry * (0.78 - k * 0.2), a0, a0 + 2.1); ctx.stroke();
+      }
+      ctx.restore();
+      ctx.restore();
+    }
+
+    /** Doraemon's anywhere door (どこでもドア): a pink door standing by itself; the exit door is ajar with light inside. */
+    drawAnywhereDoor(ctx, x, y, now, exit) {
+      const t = now / 1000;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath(); ctx.ellipse(1, 12.5, 10, 3.2, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#d2457c'; // frame
+      rr(ctx, -9.5, -19, 19, 31, 3.2); ctx.fill();
+      if (exit) { // ajar: warm light spills out of the opening
+        ctx.fillStyle = '#fff6c4';
+        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 + 0.3 * Math.sin(t * 5)) + ')';
+        ctx.fillRect(-4, -14, 2, 20);
+        ctx.fillStyle = '#ff9ec0'; // the door leaf, swung open and seen edge-on
+        ctx.beginPath(); ctx.moveTo(-7.2, -16.7); ctx.lineTo(-1.2, -14); ctx.lineTo(-1.2, 7.4); ctx.lineTo(-7.2, 9.7); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(-2.8, -2.2, 1.2, 0, 6.2832); ctx.fill();
+      } else {
+        ctx.fillStyle = '#ff9ec0'; // door leaf
+        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
+        ctx.fillStyle = '#ffc3d8'; // raised panel
+        rr(ctx, -5, -14.4, 10, 9, 1.2); ctx.fill();
+        rr(ctx, -5, -3.4, 10, 10.6, 1.2); ctx.fill();
+        ctx.fillStyle = '#ffd23f'; // the round gold knob
+        ctx.beginPath(); ctx.arc(4.2, -1.6, 1.7, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.18 + 0.18 * Math.sin(t * 4)) + ')'; // faint pulse: it is switched on
+        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    drawPortals(ctx, now) {
+      const g = this.game, w = g.world;
+      if (!w.portal.size) return;
+      // dashed link from every entrance to its exit, marching in the direction of travel
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([2, 8]);
+      ctx.lineDashOffset = -(now / 55) % 10;
+      for (const [a, b] of w.tp) {
+        const blue = w.portal.get(a).style === 'blue';
+        const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
+        const mx = (ax + bx) / 2 - (by - ay) * 0.18, my = (ay + by) / 2 + (bx - ax) * 0.18;
+        ctx.strokeStyle = blue ? 'rgba(46,120,235,0.45)' : 'rgba(225,80,135,0.45)';
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by); ctx.stroke();
+      }
+      ctx.restore();
+      for (const [n, pt] of w.portal) {
+        const x = this.nodeX(n), y = this.nodeY(n);
+        const exit = pt.kind === 'out';
+        if (pt.style === 'blue') this.drawBluePortal(ctx, x, y, now, exit);
+        else this.drawAnywhereDoor(ctx, x, y, now, exit);
+        // 入 / 出 tag
+        ctx.save();
+        ctx.translate(x, y + 17);
+        ctx.fillStyle = exit ? '#1e9a64' : '#e8780c';
+        rr(ctx, -6.5, -4.6, 13, 9.2, 4); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 8px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(exit ? '出' : '入', 0, 0.4);
+        ctx.restore();
       }
     }
 
@@ -876,6 +995,9 @@
         void t;
       }
 
+      // ---- teleport portals (over the cars, so cars seem to vanish into the entrance)
+      this.drawPortals(ctx, now);
+
       // ---- buildings
       for (const b of g.buildings) this.drawBuilding(ctx, b, g.time);
 
@@ -893,6 +1015,29 @@
           ctx.stroke();
         }
         ctx.setLineDash([]);
+      }
+      // portals: road ends that can take one (pulsing), and the entrance picked so far
+      if (this.tool === 'tp' && g.canEdit()) {
+        const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = `rgba(47,58,75,${0.35 + 0.35 * pulse})`;
+        if (g.inv.tp > 0) {
+          for (let n = 0; n < w.n; n++) {
+            if (n === this.tpFirst || g.checkPortal(n)) continue;
+            ctx.beginPath(); ctx.arc(this.nodeX(n), this.nodeY(n), 17, 0, 6.2832); ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        if (this.tpFirst >= 0) {
+          const x = this.nodeX(this.tpFirst), y = this.nodeY(this.tpFirst);
+          ctx.strokeStyle = '#e8780c'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(x, y, 19 + 2 * pulse, 0, 6.2832); ctx.stroke();
+          ctx.fillStyle = '#e8780c';
+          ctx.font = 'bold 12px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('入口', x, y - 26);
+        }
       }
       // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
       if (this.tool === 'big' && this.hover >= 0 && g.canEdit()) {
@@ -983,6 +1128,13 @@
           this.fx.push({ kind: 'puff', node: e.node, t0: g.time, dur: 0.4 });
         } else if (e.type === 'place') {
           this.fx.push({ kind: 'ring', node: e.node, color: '#2f3a4b', t0: g.time, dur: 0.4, r: 18 });
+        } else if (e.type === 'teleport') {
+          const style = g.world.portal.get(e.from) ? g.world.portal.get(e.from).style : 'blue';
+          const col = style === 'blue' ? '#4aa8ff' : '#ff8fb8';
+          this.fx.push({ kind: 'ring', node: e.from, color: col, t0: g.time, dur: 0.35, r: 14 });
+          this.fx.push({ kind: 'ring', node: e.to, color: col, t0: g.time, dur: 0.45, r: 20 });
+        } else if (e.type === 'kayray') {
+          for (const b of g.buildings) this.fx.push({ kind: 'ring', node: b.node, color: '#ffd24d', t0: g.time, dur: 1.1, r: 60 });
         } else if (e.type === 'gameover') {
           this.fx.push({ kind: 'ring', node: e.node, color: '#eb323c', t0: g.time, dur: 1.2, r: 90 });
         }

@@ -787,5 +787,171 @@ console.log('16. decorative police patrol cars stay on the roads and never touch
   check(p2.cops.length === 0, 'no patrol cars without roads');
 }
 
+console.log('17. Kayray\'s blessing: after the final failure the city can become invincible for good');
+{
+  const failedFor = (seed) => {
+    const g = new MM.Game({ seed });
+    for (let t = 0; t < 60 * 60 * 5 && g.state === 'running'; t++) g.update(0.04);
+    g.mayorOrder();
+    g.finishMayor();
+    for (let t = 0; t < 25 * (MM.CFG.MAYOR_SECONDS + 30) && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+    }
+    return g;
+  };
+  const fresh = new MM.Game({ seed: 5 });
+  check(!fresh.kayrayBlessing(), 'the blessing cannot be summoned while the game is running');
+  const early = new MM.Game({ seed: 5 });
+  for (let t = 0; t < 60 * 60 * 5 && early.state === 'running'; t++) early.update(0.04);
+  check(early.state === 'collapse' && !early.kayrayBlessing(), 'nor at the first collapse (only after the mayor\'s window has failed)');
+  const g = failedFor(5);
+  check(g.state === 'over' && g.over.final === true, 'the unrepaired city failed for good');
+  const score0 = g.score, week0 = g.week;
+  check(g.kayrayBlessing() && g.state === 'running' && g.blessed && g.over === null, 'summoning the blessing resumes the game');
+  check(g.events.some((e) => e.type === 'kayray'), 'the blessing is announced');
+  check(!g.kayrayBlessing(), 'it can only be summoned once');
+  let err = null, sawEnd = false, peak = 0;
+  for (let t = 0; t < 25 * 60 * 20; t++) { // twenty more minutes of the same choked city
+    if (g.state === 'upgrade') g.chooseUpgrade(0);
+    g.update(0.04);
+    if (g.state === 'collapse' || g.state === 'over') { sawEnd = true; break; }
+    for (const d of g.dests) peak = Math.max(peak, d.overflow);
+    if (!err && t % 50 === 0) err = sanity(g);
+  }
+  check(!sawEnd && g.state !== 'over' && g.state !== 'collapse', 'the blessed city never collapses again (20 more minutes)');
+  check(peak >= 1 - 1e-9, 'the overflow ring stays full but harmless');
+  check(g.week > week0 + 10 && g.score >= score0, 'time keeps passing: weeks advance (' + week0 + ' -> ' + g.week + ')');
+  check(g.shieldLeft() === 0 && !g.mayorActive, 'the blessing is separate from the mayor\'s timed shield');
+  check(!err, 'invariants hold (' + err + ')');
+}
+
+console.log('18. teleport portals: one pair per 100 delivered cars, alternating the blue portal and the anywhere door');
+{
+  // a house-to-destination route cut into two roads with a gap in the middle: only a portal pair can join them
+  const build = () => {
+    for (let seed = 1; seed < 200; seed++) {
+      const g = new MM.Game({ seed });
+      const h = g.houses[0], d = g.dests.find((x) => x.color === h.color);
+      const p = bfsPath(g, h.node, d.node);
+      if (!p || p.length < 9 || p.length > 24) continue;
+      const k = 3, m = p.length - 4; // entrance p[k], exit p[m]
+      for (let i = 0; i < k; i++) g.addEdge(p[i], p[i + 1], 1);
+      for (let i = m; i + 1 < p.length; i++) g.addEdge(p[i], p[i + 1], 1);
+      return { g, h, d, p, E: p[k], X: p[m] };
+    }
+    throw new Error('no suitable map');
+  };
+  const run = (g, seconds) => {
+    let err = null;
+    for (let t = 0; t < 25 * seconds && g.state !== 'collapse' && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+      if (!err && t % 25 === 0) err = sanity(g);
+    }
+    return err;
+  };
+
+  // a) the grant: one pair per 100 delivered cars, looks alternate
+  {
+    const { g } = build();
+    check(g.inv.tp === 0 && g.nextPortalStyle() === null, 'no portals at the start');
+    g.score = 99; g.grantPortals();
+    check(g.inv.tp === 0, '99 deliveries earn nothing');
+    g.score = 100; g.grantPortals(); g.grantPortals();
+    check(g.inv.tp === 1 && g.nextPortalStyle() === 'blue', 'the 100th delivery earns one pair, the blue portal (and only once)');
+    g.score = 200; g.grantPortals();
+    check(g.inv.tp === 2 && g.portalQueue.join() === 'blue,door', 'the 200th delivery earns the anywhere door');
+    g.score = 500; g.grantPortals();
+    check(g.inv.tp === 5 && g.portalQueue.join() === 'blue,door,blue,door,blue', 'the looks keep alternating');
+    check(g.events.filter((e) => e.type === 'portalgift').length === 5, 'every pair is announced');
+    const g2 = new MM.Game({ seed: 2 });
+    const car = { dest: g2.dests[0], dead: false, color: 0 };
+    g2.score = 99; g2.dests[0].pins = 1; g2.dests[0].inbound = 1;
+    g2.deliver(car);
+    check(g2.score === 100 && g2.inv.tp === 1, 'a real delivery that reaches 100 hands out the pair');
+  }
+
+  // b) placement rules
+  {
+    const { g, E, X, p, h } = build();
+    g.score = 100; g.grantPortals();
+    check(g.checkPortal(E) === null && g.checkPortal(X) === null, 'the two road ends accept a portal');
+    check(g.checkPortal(p[1]) === 'notend', 'a road tile in the middle of a road does not');
+    check(g.checkPortal(h.node) === 'node', 'a house does not');
+    check(g.checkPortal(p[5]) === 'notend', 'an empty tile does not');
+    check(g.addPortal(E, E).reason === 'same', 'the entrance and the exit must differ');
+    check(!g.addPortal(E, p[5]).ok && g.inv.tp === 1, 'a failed placement costs nothing');
+    const noStock = new MM.Game({ seed: 1 });
+    check(noStock.addPortal(0, 1).reason !== undefined && !noStock.addPortal(0, 1).ok, 'without a pair in stock nothing can be placed');
+    check(g.addPortal(E, X).ok && g.inv.tp === 0 && g.world.tp.get(E) === X, 'a pair is placed: entrance -> exit');
+    check(g.world.portal.get(E).style === 'blue' && g.world.portal.get(X).style === 'blue' && g.world.portal.get(E).kind === 'in' && g.world.portal.get(X).kind === 'out', 'both ends look the same, one is the entrance and one the exit');
+    check(g.checkPortal(E) === 'taken', 'a node holds one portal only');
+    // roads may not be attached to a portal: it sits at the very end of its road
+    let rejected = 0, tried = 0;
+    for (let d = 0; d < 4; d++) {
+      const m = g.world.nbGrid(E, d);
+      if (m < 0 || g.world.rawBetween(E, m)) continue;
+      tried++;
+      if (g.addEdge(E, m, 1).reason === 'tpend') rejected++;
+    }
+    check(tried > 0 && rejected === tried, 'no road can be attached to a portal (' + rejected + '/' + tried + ')');
+  }
+
+  // c) cars really use it
+  {
+    const none = build();
+    const e0 = run(none.g, 120);
+    check(!e0 && none.g.score === 0, 'without the portal the cut road delivers nothing');
+    const { g, E, X } = build();
+    g.score = 100; g.grantPortals();
+    const base = g.score;
+    check(g.addPortal(E, X).ok, 'portal pair placed');
+    const err = run(g, 120);
+    const tele = g.events.filter((e) => e.type === 'teleport');
+    check(!err, 'invariants hold with cars teleporting (' + err + ')');
+    check(g.score > base + 3, 'cars arrive through the portal (' + (g.score - base) + ' delivered)');
+    check(tele.length > 3 && tele.every((e) => e.from === E && e.to === X), 'teleport events go from the entrance to the exit (' + tele.length + ')');
+    check(g.cars.every((c) => !c.dead), 'no dead cars left in the list');
+  }
+
+  // d) it is one-way: a destination on the entrance side of the exit is not reachable from the exit side
+  {
+    const { g, E, X, p } = build();
+    g.score = 100; g.grantPortals();
+    g.addPortal(X, E); // reversed: the cars would have to enter at the dead end next to the destination
+    const r = g.route(g.houses[0].node, g.dests.find((x) => x.color === g.houses[0].color).node, -1);
+    check(r === null, 'a reversed pair does not connect the house to the destination');
+    void p;
+  }
+
+  // e) editing: erasing the road under a portal returns the pair; erasing a portal returns the pair; cars are not left stranded
+  {
+    const { g, E, X, p } = build();
+    g.score = 100; g.grantPortals();
+    g.addPortal(E, X);
+    run(g, 30);
+    check(g.removePortal(X) && g.inv.tp === 1 && g.world.tp.size === 0 && g.world.portal.size === 0, 'removing either end takes the pair back into stock');
+    check(g.nextPortalStyle() === 'blue', 'the returned pair keeps its look');
+    check(g.cars.every((c) => { const a = c.path[c.i], b = c.path[c.i + 1]; return g.world.edgeBetween(a, b); }), 'cars are re-routed or recalled');
+    g.addPortal(E, X);
+    check(g.inv.tp === 0, 'placed again');
+    const k = p.indexOf(E);
+    check(g.removeEdge(p[k - 1], E).ok, 'the road that feeds the entrance is erased');
+    check(g.inv.tp === 1 && g.world.portal.size === 0 && g.world.tp.size === 0, 'a portal that lost its road goes back to stock together with its mate');
+    const err = run(g, 20);
+    check(!err, 'invariants hold afterwards (' + err + ')');
+  }
+
+  // f) the stress bot never breaks anything with portals around
+  {
+    const { g, E, X } = build();
+    g.score = 300; g.grantPortals();
+    check(g.addPortal(E, X).ok, 'first pair placed');
+    const err = run(g, 600);
+    check(!err, 'ten simulated minutes with a portal: no invariant violations (' + err + ')');
+  }
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
