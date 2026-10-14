@@ -76,43 +76,21 @@
       const isWater = (c, r) => w.water[Math.max(0, Math.min(rows - 1, r)) * cols + Math.max(0, Math.min(cols - 1, c))] === 1;
       this.isWaterAt = (x, y) => isWater(Math.floor(x / C), Math.floor(y / C));
 
-      // ---- Edo shore (beach map): flagstone paving (石畳) in patches on land away from the water, and Mt. Fuji on the horizon
-      const slabCells = new Set();
-      this.slabs = null; this.fuji = null; const toriiAt = [];
+      // ---- Edo plain (beach map): Mt. Fuji as a backdrop
+      this.fuji = null;
       if (this.theme === 'beach') {
-        const flag = field(5);
-        const near = (c, r) => { for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (isWater(c + dc, r + dr)) return true; return false; };
-        const gaps = new Path2D(), tones = [new Path2D(), new Path2D(), new Path2D()];
-        const box = (path, X, Y, W, H) => { if (path.roundRect) path.roundRect(X, Y, W, H, 2.2); else path.rect(X, Y, W, H); };
-        for (let r = 1; r < rows - 1; r++) {
-          for (let c = 1; c < cols - 1; c++) {
-            if (flag(c, r) < 0.74 || near(c, r)) continue;
-            slabCells.add(r * cols + c);
-            if (toriiAt.length < 3 && rnd() < 0.05) toriiAt.push([c, r]);
-            gaps.rect(c * C, r * C, C, C);
-            // three courses of stone, every other course shifted by half a slab
-            for (let k = 0; k < 3; k++) {
-              const y = r * C + (k * C) / 3, h = C / 3;
-              const cuts = k % 2 ? [0, 0.25, 0.75, 1] : [0, 0.5, 1];
-              for (let i = 0; i + 1 < cuts.length; i++) box(tones[Math.floor(rnd() * 3)], c * C + cuts[i] * C + 0.9, y + 0.9, (cuts[i + 1] - cuts[i]) * C - 1.8, h - 1.8);
-            }
-          }
-        }
-        if (slabCells.size) this.slabs = { gaps, tones };
         // Mt. Fuji: a big backdrop on dry land near the top edge, clear of the water
         const clear = (c, r) => { for (let dr = -2; dr <= 2; dr++) for (let dc = -3; dc <= 3; dc++) if (isWater(c + dc, r + dr)) return false; return true; };
         const cs = [];
         for (let c = Math.floor(cols * 0.25); c <= Math.floor(cols * 0.75); c++) for (let r = 5; r <= Math.min(8, rows - 3); r++) if (clear(c, r)) cs.push([c, r]);
         if (cs.length) { const [c, r] = cs[Math.floor(rnd() * cs.length)]; this.fuji = { x: (c + 0.5) * C, y: (r + 0.5) * C, w: 6.4 * C, h: 3.8 * C }; }
       }
-      this.slabCells = slabCells;
 
       // ---- trees: up to one per quarter of every land cell (so they never sit on a road centre line)
       this.trees = [];
       for (let r = -1; r <= rows; r++) {
         for (let c = -1; c <= cols; c++) {
           if (isWater(c, r)) continue;
-          if (slabCells.has(r * cols + c)) continue; // nothing grows through the paving
           const inBoard = c >= 0 && r >= 0 && c < cols && r < rows;
           const dd = sample(dens, c, r);
           const beach = this.theme === 'beach';
@@ -148,7 +126,6 @@
           }
         }
       }
-      for (const [c, r] of toriiAt) this.trees.push({ x: (c + 0.5) * C, y: (r + 0.5) * C + 14, kind: 'torii', variant: 0, s: 1.05, ph: 0, snow: false, cell: -1 });
       if (this.fuji) { // the mountain's foot is bare: no trees on the lower slopes
         const f = this.fuji;
         this.trees = this.trees.filter((t) => !(t.y > f.y - f.h && t.y < f.y + f.h * 0.12 && Math.abs(t.x - f.x) < f.w * (0.08 + 0.42 * Math.min(1, (t.y - (f.y - f.h)) / f.h)) + 8));
@@ -264,10 +241,6 @@
         ctx.beginPath();
         for (const rp of this.ripples) for (let k = 0; k < rp.n; k++) { const y = rp.y + k * 3.2, x = rp.x + k * 2; ctx.moveTo(x, y); ctx.bezierCurveTo(x + rp.l * 0.3, y - 2.2, x + rp.l * 0.65, y + 2.2, x + rp.l, y); }
         ctx.stroke();
-      }
-      if (beach && this.slabs) { // flagstones: grey-beige slabs of three tones over dark joints
-        ctx.fillStyle = '#8f8873'; ctx.fill(this.slabs.gaps);
-        ['#cfc8b6', '#c2baa6', '#d9d3c3'].forEach((col, i) => { ctx.fillStyle = col; ctx.fill(this.slabs.tones[i]); });
       }
       ctx.strokeStyle = beach ? PAL.sand.tuft : whole ? 'rgba(120,150,185,0.45)' : PAL.tuft; // (tufts of grass poking out of the snow / dune grass)
       ctx.lineWidth = 1.1;
