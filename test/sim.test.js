@@ -745,6 +745,23 @@ console.log("15. 市長的命令: collapse -> mayor (time frozen, editable) -> i
     g.mayorOrder(); wireAll(g); g.finishMayor();
     check(g.mayorUses === 1, 'mayorUses counts the orders');
   }
+
+  // e) the order is a one-time chance: a window that was survived does not bring the order back, the next collapse is final
+  {
+    const g = collapseGame(3);
+    g.mayorOrder(); wireAll(g); g.finishMayor();
+    for (const d of g.dests) { d.pins = 0; d.inbound = 0; d.overflow = 0; }
+    for (const h of g.houses) h.queue.length = 0;
+    g.invincibleUntil = g.time + 1;
+    for (let t = 0; t < 25 * 3 && g.state === 'running'; t++) g.update(0.04);
+    check(g.state === 'running' && !g.mayorActive, 'the window was survived');
+    for (const d of g.dests) d.pins = 30;
+    for (const h of g.houses) h.tripTimer = 1e9;
+    for (let t = 0; t < 25 * 60 && g.state === 'running'; t++) g.update(0.04);
+    check(g.state === 'over' && g.over && g.over.final === true, 'the next collapse is final (no second mayor\'s order)');
+    check(!g.mayorOrder(), 'the mayor\'s order cannot be used again');
+    check(g.kayrayBlessing() && g.state === 'running' && g.blessed, 'Kayray\'s blessing is offered instead');
+  }
 }
 
 console.log('16. decorative police patrol cars stay on the roads and never touch the simulation');

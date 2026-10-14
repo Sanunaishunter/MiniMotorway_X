@@ -258,7 +258,7 @@
     const final = g.over && g.over.final;
     showModal(`
       <h2>${final ? '塞爆乃汽車常事,請市長重新再來' : '交通癱瘓了!'}</h2>
-      <p>${final ? '無敵時間結束了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
+      <p>${final ? '市長的命令已經用過了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
       <div class="big">${g.score}</div>
       <p>輛車成功送達 · 撐到第 ${g.week} 週${newBest ? ' · <b style="color:#e8590c">新紀錄!</b>' : ` · 最高 ${ui.best}`}</p>
       ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止。</p>' : ''}

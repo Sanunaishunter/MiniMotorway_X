@@ -983,8 +983,11 @@
     /** Editing roads is allowed while running and during the mayor's order (time is frozen then). */
     canEdit() { return this.state === 'running' || this.state === 'mayor'; }
 
-    /** The roads are choked: the player may use the mayor's order or give up. */
+    /** The roads are choked: the player may use the mayor's order (once per game) or give up. */
     collapse(dest) {
+      // the mayor's order is a one-time second chance: once it has been used, the next collapse is the real end
+      // (the player can still restart, or summon Kayray's blessing)
+      if (this.mayorUses > 0) { this.gameOver(dest, true); return; }
       this.state = 'collapse';
       this.over = { dest, final: false };
       this.events.push({ type: 'gameover', node: dest.node });
