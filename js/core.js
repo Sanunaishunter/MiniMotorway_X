@@ -202,8 +202,6 @@
       return !this.bld[n] && this.feat[n] !== 3 && this.deg(n) >= 3;
     }
 
-    isBridgeEdge(a, b) { return this.water[a] === 1 || this.water[b] === 1; }
-
     // ---------- terrain ----------
     genWater() {
       const { cols, rows, rand } = this;

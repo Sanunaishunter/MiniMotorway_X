@@ -130,10 +130,11 @@
       this.flakes = [];
       for (let i = 0; i < 70; i++) this.flakes.push({ u: rnd(), v: rnd(), sp: 6 + rnd() * 10, fall: 22 + rnd() * 22, ph: rnd() * TAU, r: 1 + rnd() * 1.4 });
 
-      // ---- water: the "core" of every water cell (flow highlights are clipped to it), streaks and sparkles
+      // ---- water (now ice): the "core" of every water cell (cracks and frost are clipped to it), plus glints
       const h = C / 2 - C * 0.3, EXT = 5000;
       this.core = new Path2D();
-      this.streaks = [];
+      this.cracks = [];
+      this.frost = [];
       this.sparkles = [];
       for (let n = 0; n < w.n; n++) {
         if (!w.water[n]) continue;
@@ -146,7 +147,16 @@
         if (e >= 0 && w.water[e]) this.core.rect(x - h, y0, C + 2 * h, y1 - y0);
         if (s >= 0 && w.water[s]) this.core.rect(x0, y - h, x1 - x0, C + 2 * h);
         if (e >= 0 && s >= 0 && w.water[e] && w.water[s] && w.water[s + 1]) this.core.rect(x + h, y + h, C - 2 * h, C - 2 * h);
-        for (let k = 0; k < 2; k++) this.streaks.push({ x: x + (rnd() - 0.5) * 30, y: y + (rnd() - 0.5) * 30, ph: rnd(), sp: 0.07 + rnd() * 0.06, len: 9 + rnd() * 8, amp: 1.6 + rnd() * 1.6, w: 1.2 + rnd() * 0.8 });
+        // the water is a sheet of ice: cracks (a jagged line, sometimes with a branch) and pale frost patches
+        for (let k = 0; k < 2; k++) {
+          let px = x + (rnd() - 0.5) * 30, py = y + (rnd() - 0.5) * 30, a = rnd() * TAU;
+          const pts = [[px, py]];
+          const n = 3 + Math.floor(rnd() * 3);
+          for (let i = 0; i < n; i++) { a += (rnd() - 0.5) * 1.4; const l = 6 + rnd() * 8; px += Math.cos(a) * l; py += Math.sin(a) * l; pts.push([px, py]); }
+          const branch = rnd() < 0.4 ? [pts[1 + Math.floor(rnd() * (pts.length - 2))], a + (rnd() < 0.5 ? 1 : -1) * (0.7 + rnd() * 0.5), 5 + rnd() * 6] : null;
+          this.cracks.push({ pts, branch, x, y });
+        }
+        if (rnd() < 0.7) this.frost.push({ x: x + (rnd() - 0.5) * 24, y: y + (rnd() - 0.5) * 24, rx: 8 + rnd() * 10, ry: 4 + rnd() * 6, a: rnd() * Math.PI });
         if (rnd() < 0.55) this.sparkles.push({ x: x + (rnd() - 0.5) * 30, y: y + (rnd() - 0.5) * 30, ph: rnd() * TAU, sp: 1.2 + rnd() * 1.6 });
       }
 
@@ -267,33 +277,38 @@
       const dpr = v.dpr;
       this.setScale(dpr * v.scale);
 
-      // ---- flowing water
+      // ---- the ice: frost patches, cracks and a few twinkling glints (nothing flows: the water is frozen over)
       ctx.setTransform(dpr * v.scale, 0, 0, dpr * v.scale, dpr * v.ox, dpr * v.oy);
       ctx.save();
       ctx.clip(this.core);
       const x0 = -v.ox / v.scale - 40, x1 = (v.w - v.ox) / v.scale + 40, y0 = -v.oy / v.scale - 40, y1 = (v.h - v.oy) / v.scale + 40;
-      ctx.globalAlpha = 0.10 + 0.07 * Math.sin(t * 0.9);
+      ctx.globalAlpha = 0.5;
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      for (const f of this.frost) {
+        if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        ctx.globalAlpha = 0.38;
+        ctx.beginPath(); ctx.ellipse(f.x, f.y, f.rx, f.ry, f.a, 0, TAU); ctx.fill();
+      }
       ctx.lineCap = 'round';
-      ctx.strokeStyle = '#ffffff';
-      for (const s of this.streaks) {
-        if (s.x < x0 || s.x > x1 || s.y < y0 || s.y > y1) continue;
-        const ph = mod(t * s.sp + s.ph, 1); // 0..1 along its short run, fading in and out
-        const x = s.x + (ph - 0.5) * 46;
-        const y = s.y + Math.sin(x * 0.09 + t * 1.2 + s.ph * 6) * 1.6;
-        ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.5;
-        ctx.lineWidth = s.w;
+      ctx.lineJoin = 'round';
+      for (const pass of [0, 1]) {
+        ctx.strokeStyle = pass ? 'rgba(255,255,255,0.9)' : 'rgba(70,130,175,0.35)';
+        ctx.lineWidth = pass ? 0.9 : 1.7;
+        ctx.globalAlpha = 1;
+        const oy = pass ? 0 : 1;
         ctx.beginPath();
-        ctx.moveTo(x - s.len, y);
-        ctx.quadraticCurveTo(x - s.len / 2, y - s.amp, x, y);
-        ctx.quadraticCurveTo(x + s.len / 2, y + s.amp, x + s.len, y);
+        for (const c of this.cracks) {
+          if (c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1) continue;
+          ctx.moveTo(c.pts[0][0], c.pts[0][1] + oy);
+          for (let i = 1; i < c.pts.length; i++) ctx.lineTo(c.pts[i][0], c.pts[i][1] + oy);
+          if (c.branch) { const [[bx, by], ba, bl] = c.branch; ctx.moveTo(bx, by + oy); ctx.lineTo(bx + Math.cos(ba) * bl, by + Math.sin(ba) * bl + oy); }
+        }
         ctx.stroke();
       }
       ctx.fillStyle = '#ffffff';
       for (const p of this.sparkles) {
         if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
-        const a = Math.max(0, Math.sin(t * p.sp + p.ph));
+        const a = Math.max(0, Math.sin(t * p.sp * 0.6 + p.ph));
         if (a < 0.6) continue;
         ctx.globalAlpha = (a - 0.6) * 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, TAU); ctx.fill();

@@ -519,8 +519,8 @@ console.log('11. four-lane roads: rules');
   const house = g.addBuilding('house', 0, A + 3 * w.cols);
   const nb = A + 2 * w.cols;
   check(g.addEdge(nb, house.node, 3).reason === 'wide-bld', 'roads touching a building stay two-lane');
-  const wet = (() => { for (let n = 0; n < w.n; n++) { const e = w.nb(n, 1); if (w.water[n] && e >= 0 && !w.water[e]) return [e, n]; } return null; })();
-  if (wet) { g.inv.bridge = 5; check(g.addEdge(wet[0], wet[1], 3).reason === 'wide-water', 'no four-lane bridges'); }
+  const wet = (() => { for (let n = 0; n < w.n; n++) { const e = w.nb(n, 1); if (w.water[n] && e >= 0 && !w.water[e] && !w.bld[e]) return [e, n]; } return null; })();
+  if (wet) { g.inv.wide = 5; check(g.addEdge(wet[0], wet[1], 1).ok && g.addEdge(wet[0], wet[1], 3).ok, 'four-lane roads can be laid on the ice'); }
   check(g.slotsOf(A * 4 + 1) === 1, 'after the erase the lane is single again');
 }
 
@@ -1009,14 +1009,19 @@ console.log('19. 超級原子彈: given with Kayray\'s blessing (one at a time),
   // equipment everywhere, then the bomb
   const w = g.world;
   g.inv.bridge = 20; g.inv.hw = 20; g.inv.wide = 20; g.inv.light = 5; g.inv.round = 5; g.inv.ovp = 5; g.inv.tun = 5; g.inv.tp = 0;
-  const bridges0 = g.inv.bridge;
   for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
   for (let n = 0; n < w.n; n++) { const e = w.nb(n, 1); if (e >= 0 && w.eE[n] === 1 && !w.water[n] && !w.water[e] && !w.bld[n] && !w.bld[e]) { g.addEdge(n, e, n % 3 === 0 ? 3 : 2); } }
   for (let n = 0; n < w.n; n++) if (w.deg(n) >= 3 && !w.bld[n]) g.placeFeature(n, n % 2 ? 'light' : 'round');
   for (let t = 0; t < 25 * 40; t++) g.update(0.04); // some traffic on the roads
   if (g.state === 'upgrade') g.chooseUpgrade(0); // (a week may have ended while the traffic ran)
   const roadsBefore = g.hasRoads();
-  const inUse = { bridge: bridges0 - g.inv.bridge, hw: 20 - g.inv.hw, wide: 20 - g.inv.wide, light: 5 - g.inv.light, round: 5 - g.inv.round };
+  // what is out on the map right now (a week may have ended meanwhile and handed out more stock)
+  const out = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0 };
+  for (let n = 0; n < w.n; n++) {
+    for (const d of [1, 2]) { const raw = w.rawE(n, d); if ((raw & 3) === 2) out.hw++; else if (raw && w.isWideDir(n, d)) out.wide++; }
+    if (w.feat[n] === 1) out.light++; else if (w.feat[n] === 2) out.round++; else if (w.feat[n] === 3) out.ovp++;
+  }
+  const expect = {}; for (const k of Object.keys(out)) expect[k] = g.inv[k] + out[k];
   const carsBefore = g.cars.length;
   const res = g.nuke();
   check(roadsBefore && res.ok && res.edges > 10, 'the nuke erases the roads (' + (res && res.edges) + ' road segments)');
@@ -1024,7 +1029,7 @@ console.log('19. 超級原子彈: given with Kayray\'s blessing (one at a time),
   let left = 0;
   for (let n = 0; n < w.n; n++) { if (w.eE[n] || w.eS[n]) left++; if (w.feat[n]) left++; }
   check(left === 0 && w.tun.size === 0 && g.bigs.size === 0 && w.portal.size === 0 && !g.hasRoads(), 'no road, light, roundabout, tunnel or portal is left');
-  check(g.inv.hw === 20 && g.inv.wide === 20 && g.inv.bridge === bridges0 && g.inv.light === 5 && g.inv.round === 5, 'everything went back to stock (' + JSON.stringify(inUse) + ')');
+  check(Object.keys(expect).every((k) => g.inv[k] === expect[k]) && out.hw > 0 && out.wide > 0 && out.light + out.round > 0, 'everything went back to stock (was out: ' + JSON.stringify(out) + ')');
   check(g.cars.length === 0 && (carsBefore === 0 || g.houses.reduce((a, h) => a + h.queue.length, 0) > 0), 'the cars are gone and their trips are back in the houses (' + carsBefore + ' cars)');
   check(g.buildings.length > 0 && g.state === 'running', 'buildings stay and the game goes on');
   check(!g.nuke().ok, 'no second nuke straight away');
@@ -1059,6 +1064,53 @@ console.log('19. 超級原子彈: given with Kayray\'s blessing (one at a time),
   g3.score = 100; g3.grantPortals();
   void h3;
   check(placedTun && g3.nuke().ok && g3.inv.tun === 1 && w3.tun.size === 0, 'a tunnel is wiped and refunded as well');
+}
+
+console.log('20. frozen rivers and lakes: roads go straight across the water, no bridges needed');
+{
+  let tested = 0;
+  for (let seed = 1; seed <= 12 && tested < 6; seed++) {
+    const g = new MM.Game({ seed });
+    const w = g.world;
+    check(g.inv.bridge === undefined && !MM.UPGRADES.some((u) => u.id === 'bridge'), 'seed ' + seed + ': there are no bridges any more');
+    // a straight run of road that starts on land, crosses water and ends on land again
+    let cross = null;
+    for (let n = 0; n < w.n && !cross; n++) {
+      if (w.water[n] || w.bld[n]) continue;
+      let m = n, sawWater = false;
+      for (let k = 0; k < 8; k++) {
+        m = w.nbGrid(m, 1);
+        if (m < 0) break;
+        if (w.water[m]) { sawWater = true; continue; }
+        if (sawWater && !w.bld[m]) { cross = [n, m]; break; }
+        break;
+      }
+    }
+    if (!cross) continue;
+    tested++;
+    let ok = true;
+    for (let n = cross[0]; n !== cross[1]; n++) if (!g.addEdge(n, n + 1, 1).ok) ok = false;
+    check(ok, '  a road crosses the water without any bridge (' + (cross[1] - cross[0]) + ' tiles)');
+    g.inv.hw = 20;
+    let hw = true;
+    for (let n = cross[0]; n !== cross[1]; n++) if (!g.addEdge(n, n + 1, 2).ok) hw = false;
+    check(hw, '  highways can be laid on the ice too');
+    for (let n = cross[0]; n !== cross[1]; n++) g.removeEdge(n, n + 1);
+    check(g.inv.hw === 20 && !w.rawBetween(cross[0], cross[0] + 1), '  erasing refunds the highway and removes the road');
+  }
+  check(tested >= 3, 'enough maps with a crossing were tested (' + tested + ')');
+  // cars drive over the ice: connect a house to its destination by the shortest way, water or not
+  const g = new MM.Game({ seed: 3 });
+  const w = g.world;
+  const h = g.houses[0], d = g.dests.find((x) => x.color === h.color);
+  const prev = new Map([[h.node, -1]]); const q = [h.node];
+  while (q.length) { const u = q.shift(); if (u === d.node) break; for (let k = 0; k < 4; k++) { const v = w.nb(u, k); if (v < 0 || prev.has(v) || (w.bld[v] && v !== d.node)) continue; prev.set(v, u); q.push(v); } }
+  const path = []; for (let x = d.node; x !== -1; x = prev.get(x)) path.push(x); path.reverse();
+  let allOk = true;
+  for (let i = 0; i + 1 < path.length; i++) if (!g.addEdge(path[i], path[i + 1], 1).ok) allOk = false;
+  check(allOk, 'a house is wired to its destination straight over the map');
+  for (let t = 0; t < 25 * 120 && !ended(g); t++) { if (g.state === 'upgrade') g.chooseUpgrade(0); g.update(0.04); }
+  check(g.score > 3, 'cars deliver over the ice (' + g.score + ')');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

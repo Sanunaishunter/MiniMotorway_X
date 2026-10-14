@@ -49,7 +49,7 @@
       const w = this.world;
       const spots = [];
       for (let n = 0; n < w.n; n++) {
-        if (w.bld[n] || w.water[n]) continue;
+        if (w.bld[n]) continue;
         if (this.options(n, -1, false).length) spots.push(n);
       }
       if (!spots.length) return null;

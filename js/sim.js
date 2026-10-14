@@ -7,9 +7,8 @@
   MM.UPGRADES = [
     { id: 'light', amount: 3, title: '紅綠燈', desc: '放在三岔以上的路口,讓同方向的車連續通過。' },
     { id: 'round', amount: 4, title: '圓環', desc: '路口可同時容納兩輛車,減少停等。' },
-    { id: 'bridge', amount: 6, title: '橋樑', desc: '讓道路可以跨越河流與湖泊(每段 1 個)。' },
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
-    { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在橋樑、連到房子的路與高速公路)。' },
+    { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
@@ -55,7 +54,7 @@
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0, nuke: 0 };
+      this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0, nuke: 0 };
       this.bigs = new Map(); // big roundabouts: id -> {id, center, nodes[8] in circulation order}
       this.bigSeq = 0;
       this.nextId = 1;
@@ -179,9 +178,7 @@
       const dir = w.dirOf(a, b);
       if (w.tun.has(a * 4 + dir) || w.tun.has(b * 4 + ((dir + 2) & 3))) return { ok: false, reason: 'tunnel' };
       const cur = w.rawBetween(a, b) & 3;
-      const wet = w.isBridgeEdge(a, b);
       if (kind === 3) {
-        if (wet) return { ok: false, reason: 'wide-water' };
         if (w.bld[a] || w.bld[b]) return { ok: false, reason: 'wide-bld' };
         if (cur === 2) return { ok: false, reason: 'wide-hw' };
         if (w.rawBetween(a, b) >> 2) return { ok: false, reason: 'wide-ring' };
@@ -193,7 +190,6 @@
         return { ok: true };
       }
       if (kind === 2) {
-        if (wet) return { ok: false, reason: 'hw-water' };
         if (cur === 1 && w.isWideBetween(a, b)) return { ok: false, reason: 'hw-wide' };
         if (cur === 2) return { ok: false, reason: 'same' };
         if (this.inv.hw <= 0) return { ok: false, reason: 'nohw' };
@@ -203,11 +199,7 @@
         return { ok: true };
       }
       if (cur > 0) return { ok: false, reason: 'exists' };
-      if (wet) {
-        if (this.inv.bridge <= 0) return { ok: false, reason: 'nobridge' };
-        this.inv.bridge--;
-      }
-      w.setEdge(a, b, 1);
+      w.setEdge(a, b, 1); // rivers and lakes are frozen over: a road can run straight across the ice
       this.events.push({ type: 'road' });
       return { ok: true };
     }
@@ -220,7 +212,6 @@
       if (w.ringId[a] && w.ringId[a] === w.ringId[b]) return { ok: false, reason: 'ring' }; // part of a big roundabout
       if (cur === 2) this.inv.hw++;
       else if (w.isWideBetween(a, b)) this.inv.wide++;
-      else if (w.isBridgeEdge(a, b)) this.inv.bridge++;
       w.setEdge(a, b, 0);
       this.cleanFeatures([a, b]);
       this.cleanPortals([a, b]);
@@ -470,7 +461,7 @@
       return false;
     }
 
-    /** Erase all roads (and everything that sits on them). Bridges, highways, four-lane roads, lights, tunnels and portals go back to stock. */
+    /** Erase all roads (and everything that sits on them). Highways, four-lane roads, lights, tunnels and portals go back to stock. */
     nuke() {
       const w = this.world;
       if (!this.canEdit()) return { ok: false, reason: 'state' };
@@ -489,7 +480,6 @@
           if (!raw || m < 0) continue;
           if ((raw & 3) === 2) this.inv.hw++;
           else if (w.isWideDir(n, d)) this.inv.wide++;
-          else if (w.isBridgeEdge(n, m)) this.inv.bridge++;
           w.setEdge(n, m, 0);
           edges++;
         }

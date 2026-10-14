@@ -8,14 +8,13 @@
   const THEME = {
     board: '#bcd98f', // forest-floor grass
     dot: 'rgba(255,255,255,0.28)',
-    shore: '#cdeef0',
-    water: '#8ed1de',
+    shore: '#f1f9ff', // frosty rim of the ice
+    water: '#b9e1f1', // the ice of a frozen river / lake
     roadEdge: '#4f5766',
     road: '#767d89', // asphalt
     sidewalk: '#e2decd',
     hwEdge: '#3f8a63', // expressway verge (green)
     hw: '#59616d', // darker expressway asphalt
-    bridgeEdge: '#ffffff',
     ink: '#2f3a4b',
   };
 
@@ -785,13 +784,9 @@
         ctx.stroke();
         ctx.restore();
       }
-      const isBridge = (a, b) => w.water[a] === 1 || w.water[b] === 1;
       if (edges.length) {
         // Layers are drawn for ALL roads before the next layer starts, so junctions merge cleanly:
         // sidewalk -> white edge line -> asphalt. (The white line is just a slightly wider stroke under the asphalt.)
-        ctx.lineCap = 'butt';
-        strokeEdges(27, 'rgba(40,70,90,0.18)', isBridge);
-        strokeEdges(24, 'rgba(255,255,255,0.97)', isBridge);
         ctx.lineCap = 'round';
         strokeEdges(R_WIDE + 8, THEME.sidewalk, (a, b, t, wd) => t === 1 && wd);
         strokeEdges(R_NARROW + 8, THEME.sidewalk, (a, b, t, wd) => t === 1 && !wd);
