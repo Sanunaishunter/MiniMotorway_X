@@ -60,6 +60,7 @@
       this.mapMode = 'random'; // 'random' = every new game gets one of the three maps; otherwise the chosen map stays
       this.police = null; // decorative traffic police cars
       this.planes = null; // decorative aeroplanes crossing the sky
+      this.showPlanes = false; // the flyovers are switched off (set true to bring the aircraft back)
       this.nukeAt = -1e9; // when the last 超級原子彈 went off (performance.now() ms)
       this.timeMode = 'cycle'; // 'day' | 'night' | 'cycle': the sky is always bright, always dark, or follows the day / night cycle
       this.dark = 0; // current darkness 0..1 (eased toward the target)
@@ -1184,10 +1185,9 @@
       }
       ctx.restore();
       ctx.restore();
-      this.planes.update(clock, v);
-      this.planes.drawShadows(ctx, v);
+      if (this.showPlanes) { this.planes.update(clock, v); this.planes.drawShadows(ctx, v); }
       this.scn.drawSky(ctx, v, clock); // cloud shadows, clouds, drifting petals
-      this.planes.draw(ctx, v, now);
+      if (this.showPlanes) this.planes.draw(ctx, v, now);
       const dt = Math.min(0.25, Math.max(0, (now - this._lastNow) / 1000));
       this._lastNow = now;
       const target = this.darkTarget();

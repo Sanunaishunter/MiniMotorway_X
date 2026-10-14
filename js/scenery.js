@@ -215,6 +215,7 @@
       }
 
       // ---- sky: a few clouds (with shadows on the ground) and drifting petals; screen space, mild parallax
+      this.showClouds = false;
       this.clouds = [];
       for (let i = 0; i < 4; i++) this.clouds.push({ u: rnd(), v: 0.08 + rnd() * 0.84, sp: 5 + rnd() * 7, s: 0.8 + rnd() * 0.8, variant: i % 3 });
       if (this.theme === 'beach') for (let i = 0; i < 6; i++) this.birds.push({ u: rnd(), v: 0.1 + rnd() * 0.8, sp: 22 + rnd() * 16, ph: rnd() * TAU, s: 0.8 + rnd() * 0.5 });
@@ -639,7 +640,7 @@
       if (!this.cloudSprites || this.cloudDpr !== dpr) { this.cloudSprites = this.makeClouds(dpr); this.cloudDpr = dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const par = (n) => n * 0.22; // the sky drifts slower than the ground when you pan
-      for (const cl of this.clouds) {
+      for (const cl of this.showClouds ? this.clouds : []) { // (the clouds are switched off: set showClouds = true to bring them back)
         const sh = this.cloudSprites.shadow[cl.variant], cd = this.cloudSprites.cloud[cl.variant];
         const w = sh.W * cl.s, h = sh.H * cl.s, span = v.w + 2 * w;
         const x = mod(cl.u * span + t * cl.sp - par(v.ox), span) - w;
