@@ -52,6 +52,7 @@ function useInventory(g, rnd) {
     for (let j = 0; j < len && m >= 0; j++) m = w.nbGrid(m, d);
     if (m >= 0 && (w.deg(n) > 0 || w.deg(m) > 0)) g.addTunnel(n, m);
   }
+  for (let k = 0; k < 20 && g.inv.mega > 0; k++) g.placeMega(g.megaAnchor(Math.floor(rnd() * w.n)));
   for (let k = 0; k < 40 && g.inv.big > 0; k++) {
     const n = Math.floor(rnd() * w.n);
     if (w.deg(n) > 0 || w.deg(w.nbGrid(n, 0) < 0 ? n : w.nbGrid(n, 0)) > 0) g.placeBig(n);
@@ -117,7 +118,7 @@ for (let seed = 1; seed <= seeds; seed++) {
     for (const c of g.cars) { if (c.held >= 0) h[c.held]++; if (c.resLane >= 0) r[c.resLane]++; }
     for (let i = 0; i < h.length; i++) if (h[i] !== g.holders[i]) err = err || new Error('holder leak at ' + i);
     const rsl = new Int16Array(g.reservedSlot.length);
-    for (const c of g.cars) if (c.resLane >= 0) rsl[c.resLane * 2 + (c.resSlot | 0)]++;
+    for (const c of g.cars) if (c.resLane >= 0) rsl[c.resLane * 4 + (c.resSlot | 0)]++;
     for (let i = 0; i < rsl.length; i++) if (rsl[i] !== g.reservedSlot[i]) err = err || new Error('slot reservation leak at ' + i);
     for (let i = 0; i < r.length; i++) if (r[i] !== g.reserved[i]) err = err || new Error('reservation leak at ' + i);
   }

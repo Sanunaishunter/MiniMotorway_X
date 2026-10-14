@@ -64,11 +64,11 @@ function sanity(g) {
     for (let i = 0; i < h.length; i++) if (h[i] !== g.holders[i]) return 'holder accounting off at ' + i;
     for (let i = 0; i < r.length; i++) if (r[i] !== g.reserved[i]) return 'reservation accounting off at ' + i;
     const rs = new Int16Array(g.reservedSlot.length);
-    for (const c of g.cars) if (c.resLane >= 0) rs[c.resLane * 2 + (c.resSlot | 0)]++;
+    for (const c of g.cars) if (c.resLane >= 0) rs[c.resLane * 4 + (c.resSlot | 0)]++;
     for (let i = 0; i < rs.length; i++) if (rs[i] !== g.reservedSlot[i]) return 'slot reservation accounting off at ' + i;
     for (const c of g.cars) {
       const sl = c.slot | 0;
-      if (sl < 0 || sl > 1 || (sl === 1 && g.slotsOf(c.lane) < 2)) return 'car in a lane slot that does not exist';
+      if (sl < 0 || sl > 3 || (sl > 0 && sl >= g.slotsOf(c.lane))) return 'car in a lane slot that does not exist';
     }
   }
   return null;
@@ -106,7 +106,7 @@ console.log('3. unconnected houses eventually cause game over');
 console.log('4. random road editing stress (no crashes, invariants hold)');
 {
   const g = new MM.Game({ seed: 11 });
-  g.inv.light = 99; g.inv.round = 99; g.inv.hw = 99; g.inv.bridge = 99; g.inv.ovp = 99; g.inv.tun = 99; g.inv.big = 99; g.inv.wide = 99;
+  g.inv.light = 99; g.inv.round = 99; g.inv.hw = 99; g.inv.bridge = 99; g.inv.ovp = 99; g.inv.tun = 99; g.inv.big = 99; g.inv.mega = 99; g.inv.wide = 99;
   const rnd = MM.mulberry32(5);
   let err = null;
   for (let t = 0; t < 60 * 20 && !ended(g); t++) {
@@ -124,7 +124,8 @@ console.log('4. random road editing stress (no crashes, invariants hold)');
       else if (r < 0.85) g.placeFeature(n, 'light');
       else if (r < 0.90) g.placeFeature(n, 'round');
       else if (r < 0.92) g.placeFeature(n, 'ovp');
-      else if (r < 0.94) g.placeBig(n);
+      else if (r < 0.935) g.placeBig(n);
+      else if (r < 0.94) g.placeMega(g.megaAnchor(n));
       else if (r < 0.96) g.addTunnel(n, g.world.nb(g.world.nb(n, d), d) >= 0 ? g.world.nb(g.world.nb(g.world.nb(n, d), d), d) >= 0 ? g.world.nb(g.world.nb(g.world.nb(n, d), d), d) : -1 : -1);
       else if (r < 0.975) g.removeTunnelAt(n);
       else if (r < 0.985) g.removeBigAt(n);
@@ -1190,6 +1191,64 @@ console.log('22. a destination with no road keeps its trips and overflows (it is
   check(delivered > 0, 'cars still drive to the wired destination (' + delivered + ')');
   check(b.pins >= MM.CFG.PIN_LIMIT && b.inbound === 0, 'the unwired destination collects pins (' + b.pins + ') and no car is sent to it');
   check(g.state === 'collapse', 'and it overflows and collapses the city (state ' + g.state + ')');
+}
+
+console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes side by side) round a 6x6 lawn');
+{
+  const mk = () => {
+    let g, o = -1;
+    for (let seed = 21; o < 0; seed++) { g = new MM.Game({ seed, cols: 40, rows: 24 }); o = findOpen(g, 12, 10); }
+    isolate(g);
+    return { g, tl: o + 2 + g.world.cols };
+  };
+  const { g, tl } = mk();
+  const w = g.world;
+  check(g.placeMega(tl).reason === 'none' && g.checkMega(tl) === null, 'needs inventory; the 8x8 area is free');
+  g.inv.mega = 2;
+  check(g.placeMega(tl).ok && g.inv.mega === 1, 'the mega roundabout is placed');
+  const b = [...g.bigs.values()][0];
+  check(b.kind === 'mega' && b.nodes.length === 28 && b.inner.length === 36, 'a ring of 28 nodes round 36 lawn nodes');
+  check(b.nodes.every((n, i) => { const m = b.nodes[(i + 1) % 28]; return w.adjacent(n, m) && w.edgeBetween(n, m) && !w.edgeBetween(m, n) && w.isWideBetween(n, m); }), 'every ring edge is four-lane and one-way (counter-clockwise)');
+  check(b.nodes.every((n) => w.ringId[n] === b.id) && b.inner.every((n) => w.island[n] === b.id), 'ring and lawn are marked');
+  check(g.slotsOf(b.nodes[0] * 4 + w.dirOf(b.nodes[0], b.nodes[1])) === 4, 'the ring has four lanes in its one direction');
+  const lawn = b.inner[0];
+  check(g.addEdge(lawn, lawn + 1, 1).reason === 'island', 'no road can be built on the lawn');
+  check(!g.removeEdge(b.nodes[0], b.nodes[1]).ok, 'a ring segment cannot be torn out alone');
+  check(g.placeMega(tl).reason === 'blocked', 'a second one cannot overlap the first');
+  check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - 8) * w.cols + (w.cols - 8), 'the footprint is nudged inward at the board edge');
+
+  // traffic: cars all round the ring at once use the four lanes and never jam
+  let err = null, done = 0, maxSlot = 0, spawned = 0;
+  const rnd = MM.mulberry32(9);
+  const orig = g.deliver.bind(g);
+  g.deliver = (car) => { done++; orig(car); };
+  MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
+  for (let t = 0; t < 25 * 90; t++) {
+    for (let k = 0; k < 2; k++) {
+      const st = Math.floor(rnd() * 28), len = 6 + Math.floor(rnd() * 20);
+      const path = [];
+      for (let j = 0; j <= len; j++) path.push(b.nodes[(st + j) % 28]);
+      const car = fakeCar(g, path);
+      g.cars.pop();
+      if (g.laneClear(car.lane, MM.CFG.GAP * 1.4, car.slot)) { g.cars.push(car); spawned++; }
+    }
+    g.update(0.04);
+    g.events.length = 0;
+    for (const c of g.cars) if (g.slotsOf(c.lane) === 4) maxSlot = Math.max(maxSlot, c.slot | 0);
+    err = err || sanity(g);
+  }
+  check(!err, 'invariants hold (' + err + ')');
+  check(maxSlot === 3 && done > spawned * 0.5, 'cars use all four lanes (outermost slot ' + maxSlot + ') and flow (' + done + ' of ' + spawned + ' arrived)');
+
+  // removing it clears the ring and the lawn and refunds the piece
+  check(g.removeBigAt(b.inner[0]) && g.inv.mega === 2 && !g.bigs.size && b.nodes.every((n) => !w.ringId[n] && !w.edgeBetween(n, b.nodes[(b.nodes.indexOf(n) + 1) % 28])) && b.inner.every((n) => !w.island[n]), 'erasing the lawn removes it and refunds the mega roundabout');
+
+  // roads running through the footprint are cleared and refunded when it is laid
+  const m2 = mk();
+  m2.g.inv.mega = 1; m2.g.inv.wide = 0;
+  const w2 = m2.g.world, c0 = m2.tl + 3 * w2.cols + 1;
+  m2.g.addEdge(c0 - 1, c0, 1); m2.g.addEdge(c0, c0 + 1, 1); m2.g.addEdge(c0 + 1, c0 + 2, 1);
+  check(m2.g.placeMega(m2.tl).ok && !w2.rawBetween(c0 - 1, c0) && !w2.rawBetween(c0, c0 + 1) && !w2.rawBetween(c0 + 1, c0 + 2), 'roads inside the footprint are cleared when the ring is laid');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

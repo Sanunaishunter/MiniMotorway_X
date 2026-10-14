@@ -159,6 +159,7 @@
     wide: '<svg viewBox="0 0 32 32"><rect x="7" y="2" width="18" height="28" rx="3" fill="#767d89" stroke="#fff" stroke-width="1.6"/><path d="M15.2 3V29M16.8 3V29" stroke="#f0c52f" stroke-width="1.3"/><path d="M11.4 4V28M20.6 4V28" stroke="#fff" stroke-width="1.2" stroke-dasharray="3 3"/></svg>',
     ovp: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M3 21H29" stroke="#8e9bb0" stroke-width="6"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>',
     tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
+    mega: '<svg viewBox="0 0 32 32" fill="none"><rect x="3" y="3" width="26" height="26" rx="10" stroke="#8e9bb0" stroke-width="7.5"/><rect x="3" y="3" width="26" height="26" rx="10" stroke="#fff" stroke-width="1.2" stroke-dasharray="2.5 3"/><rect x="10" y="10" width="12" height="12" rx="4" fill="#9fd3a8"/></svg>',
     big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
   };
 
@@ -352,7 +353,7 @@
       toast('轟!道路全部被抹除了,重新規劃吧');
     }
   }
-  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'tp'];
+  const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'mega', 'tp'];
   function setTpFirst(n) { ui.tpFirst = n; renderer.tpFirst = n; }
   let stroke = null;
   let lastDeny = 0;
@@ -362,7 +363,7 @@
     none: '已經用完了,下週再挑選升級',
     occupied: '這裡不能放置',
     edge: '離地圖邊緣太近了',
-    blocked: '大圓環需要 3×3 的空地(不能有建築、水面或設施)',
+    blocked: '圓環需要一塊空地(不能有建築、水面或設施)',
     line: '入口和出口要在同一條直線上',
     short: '隧道至少要 2 格長',
     long: '隧道最長 6 格',
@@ -473,6 +474,11 @@
       stroke = null;
     } else if (tool === 'big') {
       const r = g.placeBig(n);
+      if (r.ok) sfx.place();
+      else denyFor(r.reason);
+      stroke = null;
+    } else if (tool === 'mega') {
+      const r = g.placeMega(g.megaAnchor(n));
       if (r.ok) sfx.place();
       else denyFor(r.reason);
       stroke = null;
@@ -683,7 +689,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'tp', 'nuke']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'tp', 'nuke']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {

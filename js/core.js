@@ -23,6 +23,7 @@
     OVERFLOW_TIME: 16, // seconds the overflow meter needs to fill
     SPORT_PERCENT: 7, // share of the cars that are sports cars (Mazda 787B / Porsche 911): one of them is worth SPORT_WEIGHT ordinary cars
     SPORT_WEIGHT: 5,
+    MEGA_SIZE: 8, // footprint (cells per side) of the mega roundabout
     PORTAL_EVERY: 100, // every this many delivered cars the player is given one pair of teleport portals
     PORTAL_COST: 0.25, // routing cost (about the time in seconds-ish of a quarter cell) of stepping through a portal
     MAYOR_SECONDS: 300, // 市長的命令: how long (game seconds, 5 minutes) the city is invincible once the roads have been rebuilt

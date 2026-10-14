@@ -233,7 +233,10 @@
 
     // ------------------------------------------------------------ cars
     /** Distance of a lane's centre from the road's centre line: 4 on a two-lane road, 4 (inner) or 12 (outer) on a four-lane one. */
-    laneOff(lane, slot) { return this.game.slotsOf(lane) > 1 ? (slot ? 12 : 4) : OFF; }
+    laneOff(lane, slot) {
+      const S = this.game.slotsOf(lane);
+      return S > 2 ? [-12, -4, 4, 12][Math.min(3, slot | 0)] : S > 1 ? (slot ? 12 : 4) : OFF;
+    }
 
     carPose(car) {
       const p = car.path, i = car.i, s = car.s;
@@ -791,6 +794,38 @@
       ctx.globalAlpha = 1;
     }
 
+    /** The mega roundabout's lawn (the 6x6 inside of the ring) and the flow arrows on its four lanes. */
+    drawMega(ctx, big) {
+      const S = MM.CFG.MEGA_SIZE;
+      const x0 = this.nodeX(big.center) + 20, y0 = this.nodeY(big.center) + 20, L = (S - 1) * C - 40; // inside the ring road's kerb
+      ctx.fillStyle = '#a9d9b1'; rr(ctx, x0, y0, L, L, 26); ctx.fill();
+      ctx.fillStyle = '#8cc89d'; rr(ctx, x0 + 9, y0 + 9, L - 18, L - 18, 20); ctx.fill();
+      ctx.fillStyle = '#6fb383';
+      const cx = x0 + L / 2, cy = y0 + L / 2;
+      for (const [tx, ty, tr] of [[-70, -52, 16], [62, -66, 12], [-40, 58, 14], [76, 40, 17], [-92, 28, 11], [20, -20, 9], [-10, 84, 10], [98, -12, 9]]) { ctx.beginPath(); ctx.arc(cx + tx, cy + ty, tr, 0, 6.2832); ctx.fill(); }
+      ctx.fillStyle = '#9fd3a8'; // a round pond in the middle
+      ctx.beginPath(); ctx.arc(cx, cy, 34, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#b9e1f1'; ctx.beginPath(); ctx.arc(cx, cy, 27, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(cx - 8, cy - 8, 6, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'; // flow arrows on all four lanes
+      const n = big.nodes.length;
+      for (let i = 0; i < n; i++) {
+        const a = big.nodes[i], b = big.nodes[(i + 1) % n];
+        if (i % 2) continue;
+        const mx = (this.nodeX(a) + this.nodeX(b)) / 2, my = (this.nodeY(a) + this.nodeY(b)) / 2;
+        const dx = Math.sign(this.nodeX(b) - this.nodeX(a)), dy = Math.sign(this.nodeY(b) - this.nodeY(a));
+        for (const o of [-12, -4, 4, 12]) {
+          const px = mx - dy * o, py = my + dx * o; // (right-hand side of the heading is (-dy, dx))
+          ctx.beginPath();
+          ctx.moveTo(px + dx * 4, py + dy * 4);
+          ctx.lineTo(px - dx * 2.6 - dy * 2.6, py - dy * 2.6 + dx * 2.6);
+          ctx.lineTo(px - dx * 2.6 + dy * 2.6, py - dy * 2.6 - dx * 2.6);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    }
+
     // ------------------------------------------------------------ frame
     render(now) {
       const ctx = this.ctx, v = this.view, g = this.game;
@@ -880,11 +915,12 @@
           trimmed(k, (x0, y0, x1, y1) => { ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); });
         }
         ctx.stroke();
-        ctx.beginPath(); // lane lines of four-lane roads (between the two lanes of each direction)
+        ctx.beginPath(); // lane lines of four-lane roads (between the two lanes of each direction; a one-way one has three, all dashed)
         for (let k = 0; k < edges.length; k += 5) {
           if (!edges[k + 4]) continue;
+          const ow = edges[k + 3] > 0;
           trimmed(k, (x0, y0, x1, y1, nx, ny) => {
-            for (const o of [-8, 8]) { ctx.moveTo(x0 + nx * o, y0 + ny * o); ctx.lineTo(x1 + nx * o, y1 + ny * o); }
+            for (const o of ow ? [-8, 0, 8] : [-8, 8]) { ctx.moveTo(x0 + nx * o, y0 + ny * o); ctx.lineTo(x1 + nx * o, y1 + ny * o); }
           });
         }
         ctx.stroke();
@@ -893,7 +929,7 @@
         ctx.strokeStyle = '#f0c52f';
         ctx.beginPath(); // solid yellow centre line (no overtaking)
         for (let k = 0; k < edges.length; k += 5) {
-          if (!edges[k + 4]) continue;
+          if (!edges[k + 4] || edges[k + 3]) continue;
           trimmed(k, (x0, y0, x1, y1, nx, ny) => {
             for (const o of [-0.9, 0.9]) { ctx.moveTo(x0 + nx * o, y0 + ny * o); ctx.lineTo(x1 + nx * o, y1 + ny * o); }
           });
@@ -971,6 +1007,7 @@
 
       // ---- big roundabouts: green island in the middle, arrows showing the (counter-clockwise) flow
       for (const big of g.bigs.values()) {
+        if (big.kind === 'mega') { this.drawMega(ctx, big); continue; }
         const x = this.nodeX(big.center), y = this.nodeY(big.center);
         // the whole 3x3 area inside the ring is a lawn island
         ctx.fillStyle = '#a9d9b1';
@@ -1117,6 +1154,18 @@
           ctx.textAlign = 'center';
           ctx.fillText('第一個門', x, y - 26);
         }
+      }
+      // mega roundabout: show the 8x8 footprint under the pointer
+      if (this.tool === 'mega' && this.hover >= 0 && g.canEdit()) {
+        const tl = g.megaAnchor(this.hover), bad = g.checkMega(tl);
+        const x = this.nodeX(tl) - C / 2, y = this.nodeY(tl) - C / 2, S = MM.CFG.MEGA_SIZE;
+        ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : 'rgba(53,196,140,0.18)';
+        ctx.strokeStyle = bad ? 'rgba(235,60,70,0.7)' : 'rgba(30,150,100,0.8)';
+        ctx.lineWidth = 2.4;
+        ctx.setLineDash([8, 6]);
+        rr(ctx, x, y, S * C, S * C, 26);
+        ctx.fill(); ctx.stroke();
+        ctx.setLineDash([]);
       }
       // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
       if (this.tool === 'big' && this.hover >= 0 && g.canEdit()) {

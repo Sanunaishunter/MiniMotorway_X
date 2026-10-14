@@ -10,6 +10,7 @@
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
     { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
+    { id: 'mega', amount: 1, title: '超大圓環', desc: '8×8 格的單向四線道圓環,中央是大片綠地:大量車流可以同時繞行。放下去會清掉範圍內原本的路。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
 
@@ -29,7 +30,7 @@
       this.lastEntry = new Float64Array(n); // when a car last took the lock of each junction
       this.laneLoad = new Int16Array(n * 4);
       this.reserved = new Int16Array(n * 4); // exit-lane slots promised to cars that hold an intersection lock
-      this.reservedSlot = new Int16Array(n * 8); // the same, split per lane slot (index lane*2 + slot)
+      this.reservedSlot = new Int16Array(n * 16); // the same, split per lane slot (index lane*4 + slot)
       this.lights = new Map(); // node -> {green, timer, pending, waiting:[bool,bool]}
       this.lanes = new Map(); // laneId -> cars (rebuilt every step)
       this.cars = [];
@@ -54,8 +55,8 @@
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0, nuke: 0 };
-      this.bigs = new Map(); // big roundabouts: id -> {id, center, nodes[8] in circulation order}
+      this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, mega: 0, tp: 0, nuke: 0 };
+      this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (8x8, four lanes), center, nodes[] in circulation order, inner[] island nodes}
       this.bigSeq = 0;
       this.nextId = 1;
       this.houseTimer = 14;
@@ -274,16 +275,23 @@
       return null;
     }
 
-    placeBig(c) {
+    /** Why a mega roundabout whose 8x8 footprint has its top-left corner at `tl` cannot be built ('edge' / 'blocked'), or null. */
+    checkMega(tl) {
       const w = this.world;
-      if (!this.canEdit()) return { ok: false, reason: 'state' };
-      const bad = this.checkBig(c);
-      if (bad) return { ok: false, reason: bad };
-      if (this.inv.big <= 0) return { ok: false, reason: 'none' };
-      const col = w.col(c), row = w.row(c);
-      const OFFS = [[1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0]]; // NE N NW W SW S SE E
-      const ring = OFFS.map((o) => (row + o[1]) * w.cols + col + o[0]);
-      const all = [c, ...ring];
+      if (tl < 0) return 'blocked';
+      const col = w.col(tl), row = w.row(tl), S = CFG.MEGA_SIZE;
+      if (col < 0 || row < 0 || col + S > w.cols || row + S > w.rows) return 'edge';
+      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) {
+        const n = (row + dy) * w.cols + col + dx;
+        if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n] || w.feat[n] || w.portal.has(n) || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return 'blocked';
+      }
+      return null;
+    }
+
+    /** Lay a one-way ring along `ring` (counter-clockwise order) round the nodes in `inner`, clearing whatever ran inside the footprint. */
+    buildRing(kind, centre, ring, inner, wide) {
+      const w = this.world;
+      const all = [...ring, ...inner];
       const inside = new Set(all);
       for (const n of all) {
         for (const d of [1, 2]) { // each adjacent pair once
@@ -294,15 +302,54 @@
         }
       }
       const id = ++this.bigSeq;
-      for (let i = 0; i < 8; i++) {
-        w.setEdge(ring[i], ring[(i + 1) % 8], 1, true);
+      for (let i = 0; i < ring.length; i++) {
+        w.setEdge(ring[i], ring[(i + 1) % ring.length], 1, true, wide);
         w.ringId[ring[i]] = id;
       }
-      w.island[c] = id;
-      this.bigs.set(id, { id, center: c, nodes: ring });
-      this.inv.big--;
+      for (const n of inner) w.island[n] = id;
+      this.bigs.set(id, { id, kind, center: centre, nodes: ring, inner });
       this.validateCars();
-      this.events.push({ type: 'place', node: c });
+      this.events.push({ type: 'place', node: centre });
+    }
+
+    placeBig(c) {
+      const w = this.world;
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
+      const bad = this.checkBig(c);
+      if (bad) return { ok: false, reason: bad };
+      if (this.inv.big <= 0) return { ok: false, reason: 'none' };
+      const col = w.col(c), row = w.row(c);
+      const OFFS = [[1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0]]; // NE N NW W SW S SE E
+      const ring = OFFS.map((o) => (row + o[1]) * w.cols + col + o[0]);
+      this.inv.big--;
+      this.buildRing('big', c, ring, [c], false);
+      return { ok: true };
+    }
+
+    /** The 8x8 mega roundabout (超大四線道圓環): a one-way ring of four-lane road, 28 nodes, round a 6x6 lawn. `tl` = top-left node. */
+    /** The top-left node of the 8x8 footprint for a click on `n` (nudged inward so it always fits on the board). */
+    megaAnchor(n) {
+      const w = this.world, S = CFG.MEGA_SIZE;
+      const col = Math.max(0, Math.min(w.cols - S, w.col(n) - 3)), row = Math.max(0, Math.min(w.rows - S, w.row(n) - 3));
+      return row * w.cols + col;
+    }
+
+    placeMega(tl) {
+      const w = this.world;
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
+      const bad = this.checkMega(tl);
+      if (bad) return { ok: false, reason: bad };
+      if (this.inv.mega <= 0) return { ok: false, reason: 'none' };
+      const col = w.col(tl), row = w.row(tl), S = CFG.MEGA_SIZE, at = (dx, dy) => (row + dy) * w.cols + col + dx;
+      const ring = [];
+      for (let dx = S - 1; dx >= 0; dx--) ring.push(at(dx, 0)); // along the top, east to west (counter-clockwise seen from above)
+      for (let dy = 1; dy < S; dy++) ring.push(at(0, dy)); // down the west side
+      for (let dx = 1; dx < S; dx++) ring.push(at(dx, S - 1)); // along the bottom, west to east
+      for (let dy = S - 2; dy >= 1; dy--) ring.push(at(S - 1, dy)); // up the east side
+      const inner = [];
+      for (let dy = 1; dy < S - 1; dy++) for (let dx = 1; dx < S - 1; dx++) inner.push(at(dx, dy));
+      this.inv.mega--;
+      this.buildRing('mega', tl, ring, inner, true);
       return { ok: true };
     }
 
@@ -310,13 +357,13 @@
       const w = this.world;
       const b = this.bigs.get(id);
       if (!b || !this.canEdit()) return false;
-      for (let i = 0; i < 8; i++) {
-        w.setEdge(b.nodes[i], b.nodes[(i + 1) % 8], 0);
+      for (let i = 0; i < b.nodes.length; i++) {
+        w.setEdge(b.nodes[i], b.nodes[(i + 1) % b.nodes.length], 0);
         w.ringId[b.nodes[i]] = 0;
       }
-      w.island[b.center] = 0;
+      for (const n of b.inner) w.island[n] = 0;
       this.bigs.delete(id);
-      this.inv.big++;
+      this.inv[b.kind]++;
       this.cleanFeatures(b.nodes);
       this.validateCars();
       this.events.push({ type: 'erase' });
@@ -603,9 +650,11 @@
       return (CFG.SPEED * (t === 2 ? CFG.HW_MULT : t === 3 ? CFG.TUN_MULT : 1)) / this.lenOf(lane);
     }
 
-    /** Number of lane slots (cars side by side) on a lane: 2 on a four-lane road, else 1. */
+    /** Number of lane slots (cars side by side) on a lane: 4 on a one-way four-lane road, 2 on a two-way one, else 1. */
     slotsOf(lane) {
-      return this.world.isWideDir(lane >> 2, lane & 3) && !this.world.tun.has(lane) ? 2 : 1;
+      const w = this.world;
+      if (!w.isWideDir(lane >> 2, lane & 3) || w.tun.has(lane)) return 1;
+      return w.rawE(lane >> 2, lane & 3) >> 2 ? 4 : 2;
     }
 
     /** Following gap (cells) between two cars in the same slot of this lane. */
@@ -625,19 +674,25 @@
 
     /** The slot a car should take on lane `nl` (0 on ordinary roads): the emptier one, preferring the side it will turn to. */
     pickSlot(car, nl) {
-      if (this.slotsOf(nl) < 2) return 0;
-      const cnt = [this.reservedSlot[nl * 2], this.reservedSlot[nl * 2 + 1]];
+      const S = this.slotsOf(nl);
+      if (S < 2) return 0;
+      const cnt = [];
+      for (let k = 0; k < S; k++) cnt.push(this.reservedSlot[nl * 4 + k]);
       const l = this.lanes.get(nl);
-      if (l) for (const o of l) if (!o.dead && o.lane === nl) cnt[o.slot | 0]++;
-      if (cnt[0] !== cnt[1]) return cnt[0] < cnt[1] ? 0 : 1;
+      if (l) for (const o of l) if (!o.dead && o.lane === nl && (o.slot | 0) < S) cnt[o.slot | 0]++;
+      const low = Math.min(...cnt);
+      // the emptiest lanes are the candidates; among them take the one nearest to the side the car is going to turn to
+      let want = Math.min(S - 1, car.slot | 0);
       const w = this.world, p = car.path;
       const b = nl >> 2, i = p.indexOf(b, car.i);
       if (i >= 0 && p[i + 2] !== undefined && w.tp.get(p[i + 1]) !== p[i + 2]) {
         const turn = (w.dirOf(p[i + 1], p[i + 2]) - w.dirOf(b, p[i + 1]) + 4) & 3; // 1 = right turn, 3 = left turn
-        if (turn === 1) return 1; // the outer (kerb) lane
-        if (turn === 3) return 0; // the inner lane
+        if (turn === 1) want = S - 1; // the outer (kerb) lane
+        else if (turn === 3) want = 0; // the inner lane
       }
-      return (car.slot | 0) % 2;
+      let best = -1;
+      for (let k = 0; k < S; k++) if (cnt[k] === low && (best < 0 || Math.abs(k - want) < Math.abs(best - want))) best = k;
+      return best;
     }
 
     dispatch(h) {
@@ -732,9 +787,10 @@
       const p1 = this.lenOf(nl) - (controlled ? 1 - CFG.STOP : 0);
       // m cars ahead wait at p1, p1-gap, ...; the entering car stops at p1 - m*gap and must still be past the release point
       const capSlot = Math.floor((p1 - this.relOf(nl)) / this.gapOf(nl) + 1e-9) + 1;
-      const cnt = [this.reservedSlot[nl * 2], this.reservedSlot[nl * 2 + 1]];
+      const cnt = [];
+      for (let k = 0; k < slots; k++) cnt.push(this.reservedSlot[nl * 4 + k]);
       const lst = this.lanes.get(nl);
-      if (lst) for (const o of lst) if (!o.dead && o.lane === nl) cnt[o.slot | 0]++;
+      if (lst) for (const o of lst) if (!o.dead && o.lane === nl && (o.slot | 0) < slots) cnt[o.slot | 0]++;
       const first = this.pickSlot(car, nl);
       let slot = -1;
       for (let k = 0; k < slots && slot < 0; k++) { const s2 = (first + k) % slots; if (cnt[s2] + 1 <= capSlot) slot = s2; }
@@ -754,7 +810,7 @@
       this.lastEntry[b] = this.time;
       this.holders[b]++;
       this.reserved[nl]++;
-      this.reservedSlot[nl * 2 + slot]++;
+      this.reservedSlot[nl * 4 + slot]++;
       car.resLane = nl;
       car.resSlot = slot;
       car.nslot = slot;
@@ -775,7 +831,7 @@
     dropReservation(car) {
       if (car.resLane >= 0) {
         this.reserved[car.resLane]--;
-        this.reservedSlot[car.resLane * 2 + (car.resSlot | 0)]--;
+        this.reservedSlot[car.resLane * 4 + (car.resSlot | 0)]--;
         car.resLane = -1;
         car.resSlot = -1;
       }
@@ -862,8 +918,11 @@
         let ns = car.nslotFor === nl ? car.nslot | 0 : 0;
         if (!this.laneClear(nl, CFG.GAP * 1.1, ns)) {
           // blocked in the chosen lane of a four-lane road: use the other one if it is free and nothing was promised to us
-          const other = 1 - ns;
-          if (this.slotsOf(nl) > 1 && car.resLane !== nl && this.laneClear(nl, CFG.GAP * 1.1, other)) ns = other;
+          let alt = -1;
+          if (this.slotsOf(nl) > 1 && car.resLane !== nl) {
+            for (let k = 0; k < this.slotsOf(nl); k++) if (k !== ns && this.laneClear(nl, CFG.GAP * 1.1, k) && (alt < 0 || Math.abs(k - ns) < Math.abs(alt - ns))) alt = k;
+          }
+          if (alt >= 0) ns = alt;
           else { car.s = 1; return; }
         }
         car.pslot = car.slot | 0;
