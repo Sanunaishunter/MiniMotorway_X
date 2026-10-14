@@ -661,13 +661,29 @@
       const lane = h.node * 4 + w.dirOf(h.node, path[1]);
       if (!this.laneClear(lane, CFG.GAP * 1.4)) return false;
       h.queue.shift();
-      const car = { id: this.nextId++, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
+      const id = this.nextId++;
+      const car = { id, weight: this.isSport(id) ? CFG.SPORT_WEIGHT : 1, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
       trip.inbound++;
       this.cars.push(car);
       let l = this.lanes.get(lane);
       if (!l) this.lanes.set(lane, (l = []));
       l.push(car);
       return true;
+    }
+
+    /** Whether the car with this id is a sports car. Picked from the id (not from the random stream), so it never disturbs anything else. */
+    isSport(id) { return ((Math.imul(id, 2654435761) >>> 0) % 100) < CFG.SPORT_PERCENT; }
+
+    /** A sports car counts for several cars: cancel up to `k` trips that are still waiting for this destination (own house first). */
+    offsetTrips(dest, k) {
+      let n = Math.min(k, Math.max(0, dest.pins - (dest.inbound || 0)));
+      let done = 0;
+      const same = this.houses.filter((h) => h.color === dest.color);
+      for (const h of same) {
+        for (let i = h.queue.length - 1; i >= 0 && n > 0; i--) if (h.queue[i] === dest) { h.queue.splice(i, 1); n--; done++; }
+      }
+      dest.pins = Math.max(0, dest.pins - done);
+      return done;
     }
 
     killCar(car, requeue) {
@@ -872,9 +888,11 @@
       car.dead = true;
       car.dest.pins = Math.max(0, car.dest.pins - 1);
       car.dest.inbound = Math.max(0, (car.dest.inbound || 0) - 1);
-      this.score++;
+      const weight = car.weight || 1;
+      if (weight > 1) this.offsetTrips(car.dest, weight - 1); // a sports car stands in for the other cars it is worth
+      this.score += weight;
       this.grantPortals();
-      this.events.push({ type: 'deliver', color: car.color, node: car.dest.node });
+      this.events.push({ type: 'deliver', color: car.color, node: car.dest.node, weight });
     }
 
     // ------------------------------------------------------------ main loop

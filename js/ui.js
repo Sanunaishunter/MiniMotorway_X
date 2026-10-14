@@ -84,6 +84,7 @@
         lastTele = now;
         tone(420, 0.16, 'sine', 0.035, 0, 1300);
       },
+      sport() { [659, 880, 1175].forEach((f, i) => tone(f, 0.18, 'square', 0.025, i * 0.06)); },
       gift() { [784, 988, 1319].forEach((f, i) => tone(f, 0.22, 'sine', 0.05, i * 0.08)); },
       nuke() {
         tone(140, 1.4, 'sawtooth', 0.07, 0, 28);
@@ -709,7 +710,7 @@
     const evs = g.events.splice(0);
     renderer.addEvents(evs);
     for (const e of evs) {
-      if (e.type === 'deliver') sfx.deliver(e.color);
+      if (e.type === 'deliver') { sfx.deliver(e.color); if (e.weight > 1) sfx.sport(); }
       else if (e.type === 'spawn' && g.time > 1) sfx.spawn();
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
       else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');

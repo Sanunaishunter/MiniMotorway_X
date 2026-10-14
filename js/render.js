@@ -294,7 +294,11 @@
     }
 
     /** Cosmetic body style, picked from the car id (never affects the simulation). */
-    carKind(car) { return CAR_KINDS[((car.id * 2654435761) >>> 0) % CAR_KINDS.length]; }
+    carKind(car) {
+      const h = Math.imul(car.id, 2654435761) >>> 0;
+      if ((car.weight || 1) > 1) return (h >>> 9) & 1 ? 'p911' : 'm787b'; // the sports cars: Porsche 911 / Mazda 787B
+      return CAR_KINDS[h % CAR_KINDS.length];
+    }
 
     drawCar(ctx, car, elevated) {
       const pose = this.carPose(car);
@@ -313,7 +317,32 @@
       ctx.strokeStyle = col.dark;
       ctx.lineWidth = 1;
       const glass = 'rgba(255,255,255,0.78)';
-      if (kind === 'kei') { // 軽自動車: short, tall and boxy
+      if (kind === 'm787b') { // Mazda 787B (Le Mans 1991): a low, wide Group C prototype with covered wheels, a bubble canopy and a big rear wing
+        ctx.fillStyle = '#1d2026'; // fat tyres poking out of the bodywork
+        for (const [x, w] of [[2.6, 3.0], [-5.4, 3.4]]) { rr(ctx, x, -4.3, w, 1.3, 0.5); ctx.fill(); rr(ctx, x, 3.0, w, 1.3, 0.5); ctx.fill(); }
+        ctx.fillStyle = col.main; ctx.strokeStyle = col.dark; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(7, 0); ctx.quadraticCurveTo(5.2, -2.8, 1.5, -3.4); ctx.lineTo(-3.2, -3.4); ctx.quadraticCurveTo(-5.6, -3.2, -6.4, -2.2);
+        ctx.lineTo(-6.4, 2.2); ctx.quadraticCurveTo(-5.6, 3.2, -3.2, 3.4); ctx.lineTo(1.5, 3.4); ctx.quadraticCurveTo(5.2, 2.8, 7, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.fillRect(-5.8, -0.55, 12, 1.1); // the white stripe of the Renown livery
+        ctx.fillStyle = '#18a85a'; ctx.fillRect(-6.3, -3.1, 2.2, 6.2); // green tail section
+        ctx.fillStyle = '#18a85a'; ctx.fillRect(2.2, -3.2, 1.4, 1.5); ctx.fillRect(2.2, 1.7, 1.4, 1.5); // front fender flashes
+        ctx.fillStyle = 'rgba(20,32,48,0.92)'; ctx.beginPath(); ctx.ellipse(-0.4, 0, 2.3, 1.7, 0, 0, 6.2832); ctx.fill(); // canopy
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.ellipse(0.2, -0.5, 1, 0.5, 0, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#20242c'; ctx.fillRect(-7.4, -4.3, 1.5, 8.6); // rear wing
+        ctx.fillStyle = '#18a85a'; ctx.fillRect(-7.5, -4.4, 1.7, 0.9); ctx.fillRect(-7.5, 3.5, 1.7, 0.9); // wing end plates
+      } else if (kind === 'p911') { // Porsche 911: a rounded two-door coupe, round headlights, a long sloping roof, a duck-tail spoiler
+        ctx.fillStyle = col.main; ctx.strokeStyle = col.dark; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(6.2, -1.3); ctx.quadraticCurveTo(6.5, -2.7, 4.6, -2.9); ctx.lineTo(1.6, -3.1); ctx.quadraticCurveTo(-2.6, -3.6, -5, -3.1); ctx.quadraticCurveTo(-6.4, -2.7, -6.4, -1.3);
+        ctx.lineTo(-6.4, 1.3); ctx.quadraticCurveTo(-6.4, 2.7, -5, 3.1); ctx.quadraticCurveTo(-2.6, 3.6, 1.6, 3.1); ctx.lineTo(4.6, 2.9); ctx.quadraticCurveTo(6.5, 2.7, 6.2, 1.3); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.78)'; // windscreen
+        ctx.beginPath(); ctx.moveTo(2.9, -2.2); ctx.lineTo(1.1, -2.6); ctx.lineTo(1.1, 2.6); ctx.lineTo(2.9, 2.2); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.28)'; rr(ctx, -3.6, -2.5, 4.9, 5, 2); ctx.fill(); // roof
+        ctx.fillStyle = 'rgba(40,60,85,0.55)'; rr(ctx, -4.6, -2.1, 1.5, 4.2, 0.7); ctx.fill(); // rear window
+        ctx.fillStyle = '#fff6c8'; ctx.strokeStyle = '#2a2d33'; ctx.lineWidth = 0.6; // the round headlights
+        for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(5, s * 2.05, 0.95, 0, 6.2832); ctx.fill(); ctx.stroke(); }
+        ctx.strokeStyle = col.dark; ctx.lineWidth = 0.6; ctx.beginPath(); for (const y of [-1.1, 0, 1.1]) { ctx.moveTo(-5.7, y); ctx.lineTo(-4.9, y); } ctx.stroke(); // engine louvres
+        ctx.fillStyle = col.dark; rr(ctx, -6.6, -2.4, 1, 4.8, 0.4); ctx.fill(); // ducktail
+      } else if (kind === 'kei') { // 軽自動車: short, tall and boxy
         rr(ctx, -5.3, -3.65, 10.6, 7.3, 1.8); ctx.fill(); ctx.stroke();
         ctx.fillStyle = 'rgba(255,255,255,0.28)'; rr(ctx, -3.7, -2.6, 6.6, 5.2, 1.4); ctx.fill();
         ctx.fillStyle = glass; rr(ctx, 1.5, -2.3, 2.1, 4.6, 0.8); ctx.fill();
@@ -337,6 +366,15 @@
         }
       }
       ctx.restore();
+      if ((car.weight || 1) > 1) { // a gold "5" badge: this one is worth five cars
+        ctx.save();
+        ctx.translate(pose.x, pose.y - (elevated ? 3 : 0) - 8.5);
+        ctx.fillStyle = '#ffc21a'; ctx.strokeStyle = '#a8740a'; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.arc(0, 0, 3.3, 0, 6.2832); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#5a3a00'; ctx.font = 'bold 5.2px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(car.weight), 0, 0.3);
+        ctx.restore();
+      }
     }
 
     /** Japanese patrol car (パトカー): white body, black hood and trunk, a roof light bar flashing red then blue. Purely decorative. */
@@ -1121,7 +1159,7 @@
           ctx.fillStyle = f.color;
           ctx.font = 'bold 15px system-ui, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText('+1', x, y - 22 - k * 20);
+          ctx.fillText('+' + (f.n || 1), x, y - 22 - k * 20);
         } else if (f.kind === 'puff') {
           ctx.fillStyle = 'rgba(80,90,100,0.6)';
           ctx.beginPath();
@@ -1151,7 +1189,8 @@
         if (e.type === 'deliver') {
           const col = MM.COLORS[e.color].main;
           this.fx.push({ kind: 'ring', node: e.node, color: col, t0: g.time, dur: 0.55, r: 26 });
-          this.fx.push({ kind: 'plus', node: e.node, color: MM.COLORS[e.color].dark, t0: g.time, dur: 0.7 });
+          this.fx.push({ kind: 'plus', node: e.node, color: e.weight > 1 ? '#d99a00' : MM.COLORS[e.color].dark, n: e.weight, t0: g.time, dur: e.weight > 1 ? 1.1 : 0.7 });
+          if (e.weight > 1) this.fx.push({ kind: 'ring', node: e.node, color: '#ffc21a', t0: g.time, dur: 0.9, r: 44 });
         } else if (e.type === 'spawn') {
           this.fx.push({ kind: 'ring', node: e.node, color: MM.COLORS[e.color].main, t0: g.time, dur: 0.9, r: 46 });
         } else if (e.type === 'lost') {

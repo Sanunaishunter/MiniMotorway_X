@@ -1113,5 +1113,65 @@ console.log('20. frozen rivers and lakes: roads go straight across the water, no
   check(g.score > 3, 'cars deliver over the ice (' + g.score + ')');
 }
 
+console.log('21. sports cars (Mazda 787B / Porsche 911): one is worth five ordinary cars');
+{
+  const g0 = new MM.Game({ seed: 4 });
+  let sports = 0;
+  for (let id = 1; id <= 20000; id++) if (g0.isSport(id)) sports++;
+  check(Math.abs(sports / 20000 - MM.CFG.SPORT_PERCENT / 100) < 0.01 && MM.CFG.SPORT_WEIGHT === 5, 'about ' + MM.CFG.SPORT_PERCENT + '% of the cars are sports cars, worth 5 (' + (sports / 200).toFixed(1) + '%)');
+
+  // delivering a sports car: +5 on the score and up to 4 more waiting trips to the same destination are cancelled
+  const setup = (waiting) => {
+    const g = new MM.Game({ seed: 4 });
+    const h = g.houses[0], d = g.dests.find((x) => x.color === h.color);
+    h.queue.length = 0;
+    for (let i = 0; i < waiting; i++) h.queue.push(d);
+    d.pins = waiting + 1; d.inbound = 1; // the car on its way + the trips waiting in the house
+    return { g, h, d };
+  };
+  {
+    const { g, h, d } = setup(6);
+    g.deliver({ dest: d, house: h, color: h.color, weight: 5 });
+    check(g.score === 5, 'a sports car scores 5');
+    check(h.queue.length === 2 && d.pins === 2 && d.inbound === 0, 'and cancels 4 waiting trips (queue ' + h.queue.length + ', pins ' + d.pins + ')');
+    check(g.events.some((e) => e.type === 'deliver' && e.weight === 5), 'the delivery event carries the weight');
+  }
+  {
+    const { g, h, d } = setup(2);
+    g.deliver({ dest: d, house: h, color: h.color, weight: 5 });
+    check(g.score === 5 && h.queue.length === 0 && d.pins === 0, 'with only 2 trips waiting it clears just those (pins ' + d.pins + ')');
+  }
+  {
+    const { g, h, d } = setup(6);
+    g.deliver({ dest: d, house: h, color: h.color });
+    check(g.score === 1 && h.queue.length === 6 && d.pins === 6, 'an ordinary car still counts for one and cancels nothing');
+  }
+  // the 100-car portal gift counts the weight
+  {
+    const g = new MM.Game({ seed: 4 });
+    const h = g.houses[0], d = g.dests.find((x) => x.color === h.color);
+    g.score = 97; d.pins = 1; d.inbound = 1;
+    g.deliver({ dest: d, house: h, color: h.color, weight: 5 });
+    check(g.score === 102 && g.inv.tp === 1, 'a sports car can carry the score over 100 and earn the portal pair');
+  }
+  // a whole game: the score is the sum of the delivery weights, some cars were sports cars, nothing breaks
+  {
+    const g = new MM.Game({ seed: 8 });
+    for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
+    let sum = 0, n = 0, sportsSeen = 0, err = null;
+    for (let t = 0; t < 25 * 60 * 6 && !ended(g); t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+      for (const e of g.events) if (e.type === 'deliver') { sum += e.weight; n++; if (e.weight > 1) sportsSeen++; }
+      g.events.length = 0;
+      if (!err && t % 50 === 0) err = sanity(g);
+    }
+    check(g.score === sum && n > 10, 'score = sum of the delivery weights (' + g.score + ' from ' + n + ' deliveries)');
+    check(sportsSeen > 0, 'sports cars were among them (' + sportsSeen + ')');
+    check(g.cars.every((c) => c.weight === 1 || c.weight === 5), 'cars carry a weight of 1 or 5');
+    check(!err, 'invariants hold (' + err + ')');
+  }
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
