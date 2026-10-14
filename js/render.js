@@ -7,6 +7,8 @@
 
   const THEME = {
     board: '#bcd98f', // forest-floor grass
+    snowBoard: '#eef5fb', // snow country
+    snowDot: 'rgba(110,140,180,0.16)',
     dot: 'rgba(255,255,255,0.28)',
     shore: '#f1f9ff', // frosty rim of the ice
     water: '#b9e1f1', // the ice of a frozen river / lake
@@ -48,7 +50,8 @@
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
       this.tpFirst = -1; // node of the portal entrance that has been picked while the exit is still to be chosen
-      this.scn = null; // decorative scenery (trees, flowing water, clouds)
+      this.scn = null; // decorative scenery (trees, ice, clouds)
+      this.mapTheme = 'snow'; // 'snow' (all white, Hokkaido) or 'forest' (green with a few snowfields)
       this.police = null; // decorative traffic police cars
       this.planes = null; // decorative aeroplanes crossing the sky
       this.nukeAt = -1e9; // when the last 超級原子彈 went off (performance.now() ms)
@@ -63,12 +66,18 @@
 
     setGame(game) {
       this.game = game;
-      this.scn = new MM.Scenery(game);
+      this.scn = new MM.Scenery(game, this.mapTheme);
       this.police = new MM.Police(game.world, (Math.random() * 1e9) | 0); // decorative patrol cars (not part of the simulation)
       this.planes = new MM.Planes((Math.random() * 1e9) | 0);
       this.fx = [];
       this.statics = null;
       this.resetCamera();
+    }
+
+    /** Switch between the white snow country and the green forest (the map is redecorated, the game is untouched). */
+    setMapTheme(t) {
+      this.mapTheme = t === 'forest' ? 'forest' : 'snow';
+      if (this.game) { this.scn = new MM.Scenery(this.game, this.mapTheme); this.statics = null; }
     }
 
     resize(w, h, dpr) {
@@ -164,13 +173,13 @@
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
       ctx.scale(v.dpr, v.dpr);
-      ctx.fillStyle = THEME.board;
+      ctx.fillStyle = this.scn.theme === 'snow' ? THEME.snowBoard : THEME.board;
       ctx.fillRect(0, 0, v.w, v.h);
       ctx.translate(v.ox, v.oy);
       ctx.scale(v.scale, v.scale);
       this.scn.drawGround(ctx); // grass patches, tufts and flowers
       // lattice dots
-      ctx.fillStyle = THEME.dot;
+      ctx.fillStyle = this.scn.theme === 'snow' ? THEME.snowDot : THEME.dot;
       for (let n = 0; n < w.n; n++) {
         if (w.water[n]) continue;
         ctx.beginPath();

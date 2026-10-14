@@ -30,13 +30,15 @@
   };
 
   // sprite sizes in world units; the anchor (trunk base) sits 6 units above the bottom
-  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20] };
+  const SIZE = { round: [34, 40], sakura: [36, 40], conifer: [28, 44], bush: [26, 20], birch: [30, 46] };
   const smooth = (t) => t * t * (3 - 2 * t);
   const mod = (a, b) => ((a % b) + b) % b;
 
   class Scenery {
-    constructor(game) {
+    /** theme: 'forest' (green forest with a few snowfields) or 'snow' (a white Hokkaido-style snow country). */
+    constructor(game, theme) {
       this.game = game;
+      this.theme = theme === 'forest' ? 'forest' : 'snow';
       const w = game.world;
       const cols = game.cols, rows = game.rows;
       const rnd = MM.mulberry32((game.seed ^ 0x51ed270b) | 0);
@@ -64,7 +66,7 @@
       const sv = [];
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) sv.push(snowF(c, r));
       sv.sort((a, b) => a - b);
-      this.snowTh = sv[Math.floor(sv.length * 0.7)];
+      this.snowTh = this.theme === 'snow' ? -1 : sv[Math.floor(sv.length * 0.7)]; // the snow country is snow everywhere
       this.snowAt = (x, y) => snowF(x / C - 0.5, y / C - 0.5); // noise value at a world position
       this.isSnowAt = (x, y) => this.snowAt(x, y) > this.snowTh;
       // water test that also works one cell outside the board (the ground and the water run off-screen)
@@ -89,8 +91,9 @@
               const grove = sample(sak, c, r) > 0.68;
               let kind = 'round', variant = Math.floor(rnd() * PAL.round.length), size = 0.85 + rnd() * 0.3;
               if (snowy) { // snowfield: mostly snow-laden evergreens, a few bare-ish round trees and snow mounds
-                if (kindRoll < 0.7) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
-                else if (kindRoll < 0.86) kind = 'round';
+                if (kindRoll < 0.6) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
+                else if (kindRoll < 0.74) kind = 'round';
+                else if (kindRoll < 0.87) { kind = 'birch'; size = 0.9 + rnd() * 0.3; } // white birches, bare in winter
                 else { kind = 'bush'; size = 0.8 + rnd() * 0.3; }
               } else if (grove && kindRoll < 0.75) { kind = 'sakura'; variant = 0; }
               else if (kindRoll < 0.3) { kind = 'conifer'; variant = Math.floor(rnd() * PAL.conifer.length); }
@@ -121,14 +124,15 @@
           const v = snowF(Math.max(-0.5, Math.min(cols - 0.5, c)), Math.max(-0.5, Math.min(rows - 0.5, r)));
           if (v <= this.snowTh) continue;
           const k = Math.min(1, (v - this.snowTh) * 3.2);
+          const whole = this.theme === 'snow'; // the whole board is white already: no blobs, just more drifts and glints
           const x = (c + 0.5) * C, y = (r + 0.5) * C;
-          this.snowBlobs.push({ x: x + (rnd() - 0.5) * 10, y: y + (rnd() - 0.5) * 10, r: C * (0.5 + 0.3 * k) + rnd() * 4 });
+          if (!whole) this.snowBlobs.push({ x: x + (rnd() - 0.5) * 10, y: y + (rnd() - 0.5) * 10, r: C * (0.5 + 0.3 * k) + rnd() * 4 });
           if (rnd() < 0.8) this.snowSpark.push({ x: x + (rnd() - 0.5) * C, y: y + (rnd() - 0.5) * C, r: 0.8 + rnd() * 0.9 });
-          if (rnd() < 0.35) this.snowDrift.push({ x: x + (rnd() - 0.5) * C, y: y + (rnd() - 0.5) * C, l: 8 + rnd() * 12 });
+          if (rnd() < (whole ? 0.6 : 0.35)) this.snowDrift.push({ x: x + (rnd() - 0.5) * C, y: y + (rnd() - 0.5) * C, l: 8 + rnd() * 12 });
         }
       }
       this.flakes = [];
-      for (let i = 0; i < 70; i++) this.flakes.push({ u: rnd(), v: rnd(), sp: 6 + rnd() * 10, fall: 22 + rnd() * 22, ph: rnd() * TAU, r: 1 + rnd() * 1.4 });
+      for (let i = 0; i < (this.theme === 'snow' ? 120 : 70); i++) this.flakes.push({ u: rnd(), v: rnd(), sp: 6 + rnd() * 10, fall: 22 + rnd() * 22, ph: rnd() * TAU, r: 1 + rnd() * 1.4 });
 
       // ---- water (now ice): the "core" of every water cell (cracks and frost are clipped to it), plus glints
       const h = C / 2 - C * 0.3, EXT = 5000;
@@ -169,13 +173,14 @@
 
     // ------------------------------------------------------------ ground (drawn into the static layer, world coordinates)
     drawGround(ctx) {
+      const whole = this.theme === 'snow';
       for (const p of this.patches) {
-        ctx.fillStyle = p.light ? PAL.patchLight : PAL.patchDark;
+        ctx.fillStyle = whole ? (p.light ? 'rgba(255,255,255,0.85)' : 'rgba(176,201,228,0.32)') : (p.light ? PAL.patchLight : PAL.patchDark); // snow: gentle white rises and blue-grey hollows
         ctx.beginPath();
         ctx.ellipse(p.x, p.y, p.r, p.r * 0.72, 0, 0, TAU);
         ctx.fill();
       }
-      ctx.strokeStyle = PAL.tuft;
+      ctx.strokeStyle = whole ? 'rgba(120,150,185,0.45)' : PAL.tuft; // (tufts of grass poking out of the snow)
       ctx.lineWidth = 1.1;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -184,13 +189,13 @@
         ctx.moveTo(t.x + 2, t.y + 0.5); ctx.lineTo(t.x + 2 + Math.sin(t.a + 0.5) * t.l * 0.8, t.y + 0.5 - Math.cos(t.a + 0.5) * t.l * 0.8);
       }
       ctx.stroke();
-      for (const f of this.flowers) {
+      for (const f of whole ? [] : this.flowers) {
         ctx.fillStyle = f.c;
         ctx.beginPath();
         ctx.arc(f.x, f.y, f.r, 0, TAU);
         ctx.fill();
       }
-      // snowfields over the grass: a bluish rim first, then the white
+      // snowfields over the grass: a bluish rim first, then the white (the snow country is white all over: only drifts and glints)
       if (this.snowBlobs.length) {
         ctx.fillStyle = PAL.snowShade;
         ctx.beginPath();
@@ -200,6 +205,8 @@
         ctx.beginPath();
         for (const b of this.snowBlobs) { ctx.moveTo(b.x + b.r, b.y); ctx.arc(b.x, b.y, b.r, 0, TAU); }
         ctx.fill();
+      }
+      if (this.snowDrift.length) {
         ctx.strokeStyle = 'rgba(150,185,220,0.55)'; // wind-blown drifts
         ctx.lineWidth = 1.2;
         ctx.lineCap = 'round';
@@ -253,6 +260,17 @@
           cap(by - 3, 11.5, 15); cap(by - 12, 9.5, 14); cap(by - 21, 7, 13);
         }
         c.fillStyle = pal.light; c.globalAlpha = snow ? 0 : 0.55; c.beginPath(); c.moveTo(bx - 1, by - 33); c.lineTo(bx - 6.5, by - 21.5); c.lineTo(bx - 1, by - 21.5); c.closePath(); c.fill(); c.globalAlpha = 1;
+      } else if (kind === 'birch') { // a white birch (白樺): pale trunk with dark bark marks, thin bare branches with snow on them
+        c.fillStyle = '#f3f3ef'; c.fillRect(bx - 1.6, by - 26, 3.2, 26);
+        c.fillStyle = '#4b4641';
+        for (const y of [5, 10, 15, 20]) c.fillRect(bx - 1.6, by - y, 1.6 + (y % 2), 1.1);
+        c.strokeStyle = '#5c4f46'; c.lineWidth = 0.9; c.lineCap = 'round';
+        const br = [[-9, -33], [9, -35], [-5, -41], [5, -42], [0, -45], [-12, -25], [11, -27]];
+        c.beginPath();
+        for (const [dx, dy] of br) { c.moveTo(bx, by + Math.max(-30, dy + 12)); c.lineTo(bx + dx, by + dy); }
+        c.stroke();
+        for (const [dx, dy] of br) dot(bx + dx, by + dy + 0.5, 1.9, PAL.snow);
+        dot(bx, by - 26.5, 2.2, PAL.snow);
       } else {
         const pal = PAL.round[variant];
         if (snow) { // a snow-covered shrub: a white mound with a bit of green showing

@@ -11,6 +11,7 @@
   const BEST_KEY = 'mmx_best_v1';
   const MUTE_KEY = 'mmx_mute_v1';
   const TIME_KEY = 'mmx_time_v1';
+  const MAP_KEY = 'mmx_map_v1';
   const C = MM.CFG.CELL;
 
   const store = {
@@ -603,6 +604,19 @@
   $('btnTime').onclick = nextTimeMode;
   { const saved = store.get(TIME_KEY); setTimeMode(TIME_MODES.includes(saved) ? saved : 'cycle', false); }
 
+  // map theme: the white snow country (Hokkaido) or the green forest with a few snowfields
+  const MAP_NAMES = { snow: '雪國(全白雪地)', forest: '森林(含雪地)' };
+  function setMapTheme(m, announce) {
+    renderer.setMapTheme(m);
+    store.set(MAP_KEY, renderer.mapTheme);
+    $('icoSnow').style.display = renderer.mapTheme === 'snow' ? '' : 'none';
+    $('icoForest').style.display = renderer.mapTheme === 'forest' ? '' : 'none';
+    $('btnMap').title = '地圖:' + MAP_NAMES[renderer.mapTheme];
+    if (announce) toast('地圖:' + MAP_NAMES[renderer.mapTheme]);
+  }
+  $('btnMap').onclick = () => { setMapTheme(renderer.mapTheme === 'snow' ? 'forest' : 'snow', true); sfx.click(); };
+  { const saved = store.get(MAP_KEY); setMapTheme(saved === 'forest' ? 'forest' : 'snow', false); }
+
   // fullscreen (+ landscape lock where the browser allows it)
   const fsEl = document.documentElement;
   const canFs = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
@@ -627,6 +641,7 @@
     if (btn && !btn.classList.contains('locked') && ui.mode === 'play') setTool(map[e.key]);
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
     else if (e.key === 'n' || e.key === 'N') nextTimeMode();
+    else if (e.key === 'm' || e.key === 'M') $('btnMap').click();
     else if (e.key === '0') renderer.resetCamera();
     else if (e.key.startsWith('Arrow') && renderer.isZoomed()) {
       e.preventDefault();
