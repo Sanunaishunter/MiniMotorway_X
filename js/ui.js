@@ -84,6 +84,11 @@
         tone(420, 0.16, 'sine', 0.035, 0, 1300);
       },
       gift() { [784, 988, 1319].forEach((f, i) => tone(f, 0.22, 'sine', 0.05, i * 0.08)); },
+      nuke() {
+        tone(140, 1.4, 'sawtooth', 0.07, 0, 28);
+        tone(90, 1.8, 'square', 0.05, 0.05, 24);
+        tone(1800, 0.25, 'triangle', 0.04, 0, 200);
+      },
       kayray() { [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.42, 'triangle', 0.05, i * 0.11)); },
     };
   })();
@@ -177,6 +182,7 @@
         <li><b>拖曳</b>畫出道路,把房子連到<b>同顏色</b>的目的地。</li>
         <li>目的地旁的<b>實心圓點</b>是還沒有車出發的需求(半透明表示車已在路上)。累積太多會出現紅圈倒數,填滿就<b>交通癱瘓</b>——這時可以下<b>市長的命令</b>:時間暫停讓你改路,之後有 5 分鐘無敵時間。</li>
         <li>每週結束可挑選一項升級:紅綠燈、圓環、橋樑、高速公路、四線道、高架、隧道。</li>
+        <li>每送達 <b>100 輛</b>車會得到一對<b>傳送門</b>(藍色傳送門或任意門):依序點兩條路的盡頭,車子進其中一扇就從另一扇出來(雙向)。</li>
         <li>選擇橡皮擦(電腦可用右鍵拖曳)來拆除道路。</li>
         <li>建議<b>橫放手機</b>並按右上角的全螢幕。</li>
       </ol>
@@ -261,7 +267,7 @@
       <p>${final ? '市長的命令已經用過了,路還是塞住。' : ''}${MM.COLORS[g.over.dest.color].name}色目的地的車輛擠爆了。</p>
       <div class="big">${g.score}</div>
       <p>輛車成功送達 · 撐到第 ${g.week} 週${newBest ? ' · <b style="color:#e8590c">新紀錄!</b>' : ` · 最高 ${ui.best}`}</p>
-      ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止。</p>' : ''}
+      ${final ? '<p><b>Kayray 的祝福</b>:永久無敵,不會再癱瘓,直到你自己重新開始為止,還會送你一顆<b>超級原子彈</b>(把整張地圖的道路抹除重來)。</p>' : ''}
       <button class="btn" id="mAgain">${final ? '重來' : '再玩一次'}</button>${final ? '<button class="btn gold" id="mKayray">召喚 Kayray 的祝福</button>' : ''}`);
     $('mAgain').onclick = () => { restart(); };
     if (final) {
@@ -272,7 +278,7 @@
         ui.mode = 'play';
         ui.overShown = false;
         ui.overTimer = 0;
-        toast('Kayray 的祝福降臨:無限無敵,直到你重新開始');
+        toast('Kayray 的祝福降臨:無限無敵,還送你一顆超級原子彈!');
       };
     }
   }
@@ -323,9 +329,27 @@
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
   }
   document.querySelectorAll('.tool').forEach((b) => {
-    b.addEventListener('click', () => { sfx.unlock(); sfx.click(); setTool(b.dataset.tool); });
+    b.addEventListener('click', () => {
+      sfx.unlock();
+      if (b.dataset.tool === 'nuke') { detonate(); return; } // an action, not a tool
+      sfx.click();
+      setTool(b.dataset.tool);
+    });
   });
 
+  /** 超級原子彈: wipe every road off the map (asks first: it cannot be undone). */
+  function detonate() {
+    const g = ui.game;
+    if (ui.mode !== 'play' || !g.canEdit()) return;
+    if (g.inv.nuke <= 0) { deny('沒有原子彈了:Kayray 的祝福會每週補一顆'); return; }
+    if (!g.hasRoads()) { deny('地圖上沒有道路可以抹除'); return; }
+    if (!window.confirm('引爆超級原子彈?整張地圖的道路會全部消失(橋樑、號誌、隧道等會退回庫存),車子也會消失。')) return;
+    if (g.nuke().ok) {
+      sfx.nuke();
+      setTpFirst(-1);
+      toast('轟!道路全部被抹除了,重新規劃吧');
+    }
+  }
   const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'tp'];
   function setTpFirst(n) { ui.tpFirst = n; renderer.tpFirst = n; }
   let stroke = null;
@@ -343,7 +367,7 @@
     portal: '隧道的入口與出口不能在水面、建築或傳送門上',
     notend: '傳送門要放在馬路的盡頭(只接一條路的路端)',
     taken: '這裡已經有傳送門了',
-    same: '入口和出口要選不同的地方',
+    same: '兩扇門要放在不同的地方',
     node: '這裡不能放傳送門',
     busy: '入口朝隧道的那一側不能已經有道路',
   };
@@ -401,7 +425,7 @@
     else if (r.reason === 'tpend') deny('傳送門在路的盡頭,不能再接路(先用橡皮擦拆掉傳送門)');
   }
 
-  /** Portal tool: the first tap on a road end is the entrance, the second the exit. */
+  /** Portal tool: tap a road end for the first door, another road end for the second. */
   function pickPortal(g, n) {
     if (g.inv.tp <= 0) { deny('傳送門用完了:每送達 100 輛車可獲得一對'); return; }
     if (ui.tpFirst == null || ui.tpFirst < 0) {
@@ -409,12 +433,12 @@
       if (bad) { denyFor(bad); return; }
       setTpFirst(n);
       sfx.click();
-      toast('入口已選好,再點另一條路的盡頭當出口');
+      toast('第一扇門已選好,再點另一條路的盡頭放第二扇');
       return;
     }
     if (n === ui.tpFirst) { setTpFirst(-1); toast('已取消'); return; }
     const r = g.addPortal(ui.tpFirst, n);
-    if (r.ok) { setTpFirst(-1); sfx.place(); toast('傳送門完成:車子從入口進去,由出口出來'); }
+    if (r.ok) { setTpFirst(-1); sfx.place(); toast('傳送門完成:車子進任何一扇門,就從另一扇出來(雙向)'); }
     else denyFor(r.reason);
   }
 
@@ -645,7 +669,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '' };
-  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'tp']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'tp', 'nuke']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {
@@ -686,6 +710,7 @@
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
       else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');
       else if (e.type === 'teleport') sfx.teleport();
+      else if (e.type === 'nukegift') toast('Kayray 又送來一顆超級原子彈(工具列「原子彈」)');
       else if (e.type === 'portalgift') {
         sfx.gift();
         toast(`送達 ${g.score} 輛!獲得一對${e.style === 'blue' ? '藍色傳送門' : '任意門'}(工具列「傳送門」)`);

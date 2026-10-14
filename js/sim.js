@@ -9,7 +9,7 @@
     { id: 'round', amount: 4, title: '圓環', desc: '路口可同時容納兩輛車,減少停等。' },
     { id: 'bridge', amount: 6, title: '橋樑', desc: '讓道路可以跨越河流與湖泊(每段 1 個)。' },
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
-    { id: 'wide', amount: 10, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在橋樑、連到房子的路與高速公路)。' },
+    { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在橋樑、連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
@@ -55,7 +55,7 @@
       this.choices = null;
       this.over = null;
       this.colorsUnlocked = 0;
-      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0 };
+      this.inv = { bridge: 4, hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, tp: 0, nuke: 0 };
       this.bigs = new Map(); // big roundabouts: id -> {id, center, nodes[8] in circulation order}
       this.bigSeq = 0;
       this.nextId = 1;
@@ -395,8 +395,8 @@
       return false;
     }
 
-    // ---- teleport portals: a directed pair. Cars that drive into the entrance (the end of a road) come out of the exit (the end of
-    //      another road), wherever it is. Both sit on the dead end of a road; the pair is a free jump edge in the route graph.
+    // ---- teleport portals: a two-way pair. Cars that drive into either portal (the end of a road) come out of the other one (the
+    //      end of another road), wherever it is. Both sit on the dead end of a road; the pair is a free jump edge in the route graph.
     /** Why a portal cannot go on n ('node' / 'notend' / 'taken'), or null if it can. */
     checkPortal(n) {
       const w = this.world;
@@ -419,9 +419,10 @@
       const style = this.portalQueue.shift();
       this.inv.tp--;
       const id = ++this.portalSeq;
-      w.portal.set(a, { id, kind: 'in', style, mate: b });
-      w.portal.set(b, { id, kind: 'out', style, mate: a });
+      w.portal.set(a, { id, style, mate: b });
+      w.portal.set(b, { id, style, mate: a });
       w.tp.set(a, b);
+      w.tp.set(b, a);
       this.events.push({ type: 'place', node: a });
       this.events.push({ type: 'place', node: b });
       return { ok: true };
@@ -432,8 +433,8 @@
       const w = this.world;
       const p = w.portal.get(n);
       if (!p || !this.canEdit()) return false;
-      const entrance = p.kind === 'in' ? n : p.mate;
-      w.tp.delete(entrance);
+      w.tp.delete(n);
+      w.tp.delete(p.mate);
       w.portal.delete(n);
       w.portal.delete(p.mate);
       this.portalQueue.unshift(p.style);
@@ -458,6 +459,44 @@
         this.inv.tp++;
         this.events.push({ type: 'portalgift', style });
       }
+    }
+
+    // ---- 超級原子彈: wipe every road off the map in one go
+    /** True if there is any road, tunnel or big roundabout to erase. */
+    hasRoads() {
+      const w = this.world;
+      if (w.tun.size || this.bigs.size) return true;
+      for (let n = 0; n < w.n; n++) if (w.eE[n] || w.eS[n]) return true;
+      return false;
+    }
+
+    /** Erase all roads (and everything that sits on them). Bridges, highways, four-lane roads, lights, tunnels and portals go back to stock. */
+    nuke() {
+      const w = this.world;
+      if (!this.canEdit()) return { ok: false, reason: 'state' };
+      if (this.inv.nuke <= 0) return { ok: false, reason: 'none' };
+      if (!this.hasRoads()) return { ok: false, reason: 'empty' };
+      this.inv.nuke--;
+      for (const n of [...w.portal.keys()]) this.removePortal(n);
+      while (w.tun.size) { const key = w.tun.keys().next().value; this.removeTunnel(key >> 2, key & 3); }
+      for (const id of [...this.bigs.keys()]) this.removeBig(id);
+      for (let n = 0; n < w.n; n++) if (w.feat[n]) this.removeFeature(n);
+      let edges = 0;
+      for (let n = 0; n < w.n; n++) {
+        for (const d of [1, 2]) {
+          const m = w.nbGrid(n, d);
+          const raw = w.rawE(n, d);
+          if (!raw || m < 0) continue;
+          if ((raw & 3) === 2) this.inv.hw++;
+          else if (w.isWideDir(n, d)) this.inv.wide++;
+          else if (w.isBridgeEdge(n, m)) this.inv.bridge++;
+          w.setEdge(n, m, 0);
+          edges++;
+        }
+      }
+      this.validateCars(); // every car is now off the road network: its trip goes back to its house
+      this.events.push({ type: 'nuke', edges });
+      return { ok: true, edges };
     }
 
     // ------------------------------------------------------------ routing
@@ -547,7 +586,7 @@
             this._hpush(nd, ns);
           }
         }
-        const x = w.tp.get(u); // a portal entrance: jump to its exit (the car leaves it with no fixed heading)
+        const x = w.tp.get(u); // a portal: jump to its other end (the car leaves it with no fixed heading)
         if (x !== undefined) {
           const ns = x * 5 + 4;
           const nd = du + CFG.PORTAL_COST;
@@ -951,6 +990,10 @@
     advanceWeek() {
       this.week++;
       this.weekTime -= CFG.WEEK_SECONDS;
+      if (this.blessed && this.inv.nuke < 1) { // Kayray hands out the next 超級原子彈 once the last one is used up
+        this.inv.nuke = 1;
+        this.events.push({ type: 'nukegift' });
+      }
       let newColor = -1;
       if (this.colorsUnlocked < CFG.MAX_COLORS) {
         newColor = this.colorsUnlocked++;
@@ -1020,6 +1063,7 @@
       this.blessed = true;
       this.mayorActive = false;
       this.over = null;
+      this.inv.nuke = 1; // the blessing comes with a 超級原子彈 (one at a time: see advanceWeek)
       this.events.push({ type: 'kayray' });
       return true;
     }

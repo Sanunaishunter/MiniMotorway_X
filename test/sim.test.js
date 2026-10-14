@@ -902,7 +902,7 @@ console.log('18. teleport portals: one pair per 100 delivered cars, alternating 
     const noStock = new MM.Game({ seed: 1 });
     check(noStock.addPortal(0, 1).reason !== undefined && !noStock.addPortal(0, 1).ok, 'without a pair in stock nothing can be placed');
     check(g.addPortal(E, X).ok && g.inv.tp === 0 && g.world.tp.get(E) === X, 'a pair is placed: entrance -> exit');
-    check(g.world.portal.get(E).style === 'blue' && g.world.portal.get(X).style === 'blue' && g.world.portal.get(E).kind === 'in' && g.world.portal.get(X).kind === 'out', 'both ends look the same, one is the entrance and one the exit');
+    check(g.world.portal.get(E).style === 'blue' && g.world.portal.get(X).style === 'blue' && g.world.tp.get(E) === X && g.world.tp.get(X) === E, 'both ends look the same and the pair works in both directions');
     check(g.checkPortal(E) === 'taken', 'a node holds one portal only');
     // roads may not be attached to a portal: it sits at the very end of its road
     let rejected = 0, tried = 0;
@@ -932,14 +932,28 @@ console.log('18. teleport portals: one pair per 100 delivered cars, alternating 
     check(g.cars.every((c) => !c.dead), 'no dead cars left in the list');
   }
 
-  // d) it is one-way: a destination on the entrance side of the exit is not reachable from the exit side
+  // d) it is two-way: the route from the destination side back to the house goes through the portals as well
   {
-    const { g, E, X, p } = build();
+    const { g, E, X, p, h } = build();
     g.score = 100; g.grantPortals();
-    g.addPortal(X, E); // reversed: the cars would have to enter at the dead end next to the destination
-    const r = g.route(g.houses[0].node, g.dests.find((x) => x.color === g.houses[0].color).node, -1);
-    check(r === null, 'a reversed pair does not connect the house to the destination');
-    void p;
+    g.addPortal(E, X);
+    const there = g.route(h.node, g.dests.find((x) => x.color === h.color).node, -1);
+    check(there && there.includes(E) && there.includes(X) && there.indexOf(E) < there.indexOf(X), 'house -> destination goes in at one portal and out of the other');
+    const back = g.route(p[p.length - 3], h.node, -1);
+    check(back && back.includes(E) && back.includes(X) && back.indexOf(X) < back.indexOf(E), 'destination side -> house goes through the same pair the other way round');
+    // and a car really drives it backwards: from the destination side, through the pair, to the house
+    for (const hh of g.houses) hh.tripTimer = 1e9;
+    const start = p[p.length - 3];
+    const path = back;
+    const car = { id: g.nextId++, color: h.color, path, i: 0, s: 0, lane: start * 4 + g.world.dirOf(start, path[1]), dest: h, house: h, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
+    g.cars.push(car);
+    g.events.length = 0;
+    const before = g.score;
+    const err = run(g, 90);
+    const tele = g.events.filter((e) => e.type === 'teleport');
+    check(!err, 'invariants hold (' + err + ')');
+    check(g.score === before + 1 && car.dead, 'the car arrived at the house through the portals');
+    check(tele.length === 1 && tele[0].from === X && tele[0].to === E, 'it went in at the far portal and came out at the near one (' + tele.length + ' hops)');
   }
 
   // e) editing: erasing the road under a portal returns the pair; erasing a portal returns the pair; cars are not left stranded
@@ -968,6 +982,83 @@ console.log('18. teleport portals: one pair per 100 delivered cars, alternating 
     const err = run(g, 600);
     check(!err, 'ten simulated minutes with a portal: no invariant violations (' + err + ')');
   }
+}
+
+console.log('19. 超級原子彈: given with Kayray\'s blessing (one at a time), erases every road and refunds the equipment');
+{
+  const failedFor = (seed) => {
+    const g = new MM.Game({ seed });
+    for (let t = 0; t < 60 * 60 * 5 && g.state === 'running'; t++) g.update(0.04);
+    g.mayorOrder();
+    g.finishMayor();
+    for (let t = 0; t < 25 * (MM.CFG.MAYOR_SECONDS + 30) && g.state !== 'over'; t++) {
+      if (g.state === 'upgrade') g.chooseUpgrade(0);
+      g.update(0.04);
+    }
+    return g;
+  };
+  check(!MM.UPGRADES.some((u) => u.id === 'nuke'), 'the nuke is not one of the weekly upgrades');
+  check(MM.UPGRADES.find((u) => u.id === 'wide').amount === 20, 'four-lane roads come 20 at a time (double)');
+  const fresh = new MM.Game({ seed: 5 });
+  check(fresh.inv.nuke === 0 && !fresh.nuke().ok, 'no nuke without the blessing');
+  const g = failedFor(5);
+  check(g.inv.nuke === 0, 'the failed city has no nuke yet');
+  g.kayrayBlessing();
+  check(g.inv.nuke === 1, 'summoning Kayray\'s blessing gives one nuke');
+
+  // equipment everywhere, then the bomb
+  const w = g.world;
+  g.inv.bridge = 20; g.inv.hw = 20; g.inv.wide = 20; g.inv.light = 5; g.inv.round = 5; g.inv.ovp = 5; g.inv.tun = 5; g.inv.tp = 0;
+  const bridges0 = g.inv.bridge;
+  for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
+  for (let n = 0; n < w.n; n++) { const e = w.nb(n, 1); if (e >= 0 && w.eE[n] === 1 && !w.water[n] && !w.water[e] && !w.bld[n] && !w.bld[e]) { g.addEdge(n, e, n % 3 === 0 ? 3 : 2); } }
+  for (let n = 0; n < w.n; n++) if (w.deg(n) >= 3 && !w.bld[n]) g.placeFeature(n, n % 2 ? 'light' : 'round');
+  for (let t = 0; t < 25 * 40; t++) g.update(0.04); // some traffic on the roads
+  if (g.state === 'upgrade') g.chooseUpgrade(0); // (a week may have ended while the traffic ran)
+  const roadsBefore = g.hasRoads();
+  const inUse = { bridge: bridges0 - g.inv.bridge, hw: 20 - g.inv.hw, wide: 20 - g.inv.wide, light: 5 - g.inv.light, round: 5 - g.inv.round };
+  const carsBefore = g.cars.length;
+  const res = g.nuke();
+  check(roadsBefore && res.ok && res.edges > 10, 'the nuke erases the roads (' + (res && res.edges) + ' road segments)');
+  check(g.inv.nuke === 0, 'and uses up the nuke');
+  let left = 0;
+  for (let n = 0; n < w.n; n++) { if (w.eE[n] || w.eS[n]) left++; if (w.feat[n]) left++; }
+  check(left === 0 && w.tun.size === 0 && g.bigs.size === 0 && w.portal.size === 0 && !g.hasRoads(), 'no road, light, roundabout, tunnel or portal is left');
+  check(g.inv.hw === 20 && g.inv.wide === 20 && g.inv.bridge === bridges0 && g.inv.light === 5 && g.inv.round === 5, 'everything went back to stock (' + JSON.stringify(inUse) + ')');
+  check(g.cars.length === 0 && (carsBefore === 0 || g.houses.reduce((a, h) => a + h.queue.length, 0) > 0), 'the cars are gone and their trips are back in the houses (' + carsBefore + ' cars)');
+  check(g.buildings.length > 0 && g.state === 'running', 'buildings stay and the game goes on');
+  check(!g.nuke().ok, 'no second nuke straight away');
+  let err = null;
+  for (let t = 0; t < 25 * 20; t++) { g.update(0.04); if (t % 50 === 0 && !err) err = sanity(g); }
+  check(!err, 'invariants hold after the blast (' + err + ')');
+  for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
+  check(g.hasRoads(), 'roads can be built again');
+
+  // one at a time: the next nuke arrives with a new week, never more than one in stock
+  const week0 = g.week;
+  let seen = false;
+  for (let t = 0; t < 25 * 200 && !seen; t++) {
+    if (g.state === 'upgrade') g.chooseUpgrade(0);
+    g.update(0.04);
+    if (g.inv.nuke > 0) seen = true;
+  }
+  check(seen && g.week > week0 && g.inv.nuke === 1 && g.events.some((e) => e.type === 'nukegift'), 'a new nuke arrives with the next week');
+  for (let t = 0; t < 25 * 200; t++) { if (g.state === 'upgrade') g.chooseUpgrade(0); g.update(0.04); }
+  check(g.inv.nuke === 1, 'it never piles up beyond one');
+
+  // portals and tunnels go back into stock too
+  const g3 = new MM.Game({ seed: 11 });
+  g3.inv.nuke = 1; g3.inv.tun = 1;
+  const h3 = g3.houses[0];
+  const w3 = g3.world;
+  let placedTun = false;
+  for (let n = 0; n < w3.n && !placedTun; n++) {
+    const m = w3.nbGrid(w3.nbGrid(n, 1) < 0 ? n : w3.nbGrid(n, 1), 1);
+    if (m >= 0 && !w3.water[n] && !w3.water[m] && !w3.bld[n] && !w3.bld[m] && !w3.deg(n) && !w3.deg(m)) placedTun = g3.addTunnel(n, m).ok;
+  }
+  g3.score = 100; g3.grantPortals();
+  void h3;
+  check(placedTun && g3.nuke().ok && g3.inv.tun === 1 && w3.tun.size === 0, 'a tunnel is wiped and refunded as well');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

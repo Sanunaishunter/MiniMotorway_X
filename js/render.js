@@ -51,6 +51,8 @@
       this.tpFirst = -1; // node of the portal entrance that has been picked while the exit is still to be chosen
       this.scn = null; // decorative scenery (trees, flowing water, clouds)
       this.police = null; // decorative traffic police cars
+      this.planes = null; // decorative aeroplanes crossing the sky
+      this.nukeAt = -1e9; // when the last 超級原子彈 went off (performance.now() ms)
       this.timeMode = 'cycle'; // 'day' | 'night' | 'cycle': the sky is always bright, always dark, or follows the day / night cycle
       this.dark = 0; // current darkness 0..1 (eased toward the target)
       this._lastNow = 0;
@@ -64,6 +66,7 @@
       this.game = game;
       this.scn = new MM.Scenery(game);
       this.police = new MM.Police(game.world, (Math.random() * 1e9) | 0); // decorative patrol cars (not part of the simulation)
+      this.planes = new MM.Planes((Math.random() * 1e9) | 0);
       this.fx = [];
       this.statics = null;
       this.resetCamera();
@@ -609,7 +612,7 @@
 
     // ------------------------------------------------------------ teleport portals
     /** Diablo-style town portal: a blue vortex in a stone ring, swirling. */
-    drawBluePortal(ctx, x, y, now, exit) {
+    drawBluePortal(ctx, x, y, now) {
       const t = now / 1000;
       ctx.save();
       ctx.translate(x, y);
@@ -633,7 +636,7 @@
       ctx.scale(rx / ry, 1);
       ctx.lineCap = 'round';
       for (let k = 0; k < 3; k++) {
-        const a0 = t * (exit ? -2.4 : 2.4) + k * 2.0944;
+        const a0 = t * 2.4 + k * 2.0944;
         ctx.strokeStyle = `rgba(255,255,255,${0.75 - k * 0.12})`;
         ctx.lineWidth = 1.7;
         ctx.beginPath(); ctx.arc(0, 0, ry * (0.78 - k * 0.2), a0, a0 + 2.1); ctx.stroke();
@@ -642,8 +645,8 @@
       ctx.restore();
     }
 
-    /** Doraemon's anywhere door (どこでもドア): a pink door standing by itself; the exit door is ajar with light inside. */
-    drawAnywhereDoor(ctx, x, y, now, exit) {
+    /** Doraemon's anywhere door (どこでもドア): a pink door standing by itself. */
+    drawAnywhereDoor(ctx, x, y, now) {
       const t = now / 1000;
       ctx.save();
       ctx.translate(x, y);
@@ -651,61 +654,80 @@
       ctx.beginPath(); ctx.ellipse(1, 12.5, 10, 3.2, 0, 0, 6.2832); ctx.fill();
       ctx.fillStyle = '#d2457c'; // frame
       rr(ctx, -9.5, -19, 19, 31, 3.2); ctx.fill();
-      if (exit) { // ajar: warm light spills out of the opening
-        ctx.fillStyle = '#fff6c4';
-        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 + 0.3 * Math.sin(t * 5)) + ')';
-        ctx.fillRect(-4, -14, 2, 20);
-        ctx.fillStyle = '#ff9ec0'; // the door leaf, swung open and seen edge-on
-        ctx.beginPath(); ctx.moveTo(-7.2, -16.7); ctx.lineTo(-1.2, -14); ctx.lineTo(-1.2, 7.4); ctx.lineTo(-7.2, 9.7); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(-2.8, -2.2, 1.2, 0, 6.2832); ctx.fill();
-      } else {
-        ctx.fillStyle = '#ff9ec0'; // door leaf
-        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
-        ctx.fillStyle = '#ffc3d8'; // raised panel
-        rr(ctx, -5, -14.4, 10, 9, 1.2); ctx.fill();
-        rr(ctx, -5, -3.4, 10, 10.6, 1.2); ctx.fill();
-        ctx.fillStyle = '#ffd23f'; // the round gold knob
-        ctx.beginPath(); ctx.arc(4.2, -1.6, 1.7, 0, 6.2832); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,' + (0.18 + 0.18 * Math.sin(t * 4)) + ')'; // faint pulse: it is switched on
-        rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
-      }
+      ctx.fillStyle = '#ff9ec0'; // door leaf
+      rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
+      ctx.fillStyle = '#ffc3d8'; // raised panel
+      rr(ctx, -5, -14.4, 10, 9, 1.2); ctx.fill();
+      rr(ctx, -5, -3.4, 10, 10.6, 1.2); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; // the round gold knob
+      ctx.beginPath(); ctx.arc(4.2, -1.6, 1.7, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.18 + 0.18 * Math.sin(t * 4)) + ')'; // faint pulse: it is switched on
+      rr(ctx, -7.2, -16.7, 14.4, 26.4, 1.6); ctx.fill();
       ctx.restore();
     }
 
     drawPortals(ctx, now) {
       const g = this.game, w = g.world;
       if (!w.portal.size) return;
-      // dashed link from every entrance to its exit, marching in the direction of travel
+      // dashed link between the two portals of a pair, marching both ways (the pair is two-way)
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineWidth = 2.4;
       ctx.setLineDash([2, 8]);
-      ctx.lineDashOffset = -(now / 55) % 10;
-      for (const [a, b] of w.tp) {
-        const blue = w.portal.get(a).style === 'blue';
+      for (const [a, pt] of w.portal) {
+        const b = pt.mate;
+        if (a > b) continue;
         const ax = this.nodeX(a), ay = this.nodeY(a), bx = this.nodeX(b), by = this.nodeY(b);
         const mx = (ax + bx) / 2 - (by - ay) * 0.18, my = (ay + by) / 2 + (bx - ax) * 0.18;
-        ctx.strokeStyle = blue ? 'rgba(46,120,235,0.45)' : 'rgba(225,80,135,0.45)';
-        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by); ctx.stroke();
+        ctx.strokeStyle = pt.style === 'blue' ? 'rgba(46,120,235,0.4)' : 'rgba(225,80,135,0.4)';
+        for (const dir of [1, -1]) {
+          ctx.lineDashOffset = dir * (now / 55) % 10 + (dir < 0 ? 5 : 0);
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by); ctx.stroke();
+        }
       }
       ctx.restore();
       for (const [n, pt] of w.portal) {
         const x = this.nodeX(n), y = this.nodeY(n);
-        const exit = pt.kind === 'out';
-        if (pt.style === 'blue') this.drawBluePortal(ctx, x, y, now, exit);
-        else this.drawAnywhereDoor(ctx, x, y, now, exit);
-        // 入 / 出 tag
+        if (pt.style === 'blue') this.drawBluePortal(ctx, x, y, now);
+        else this.drawAnywhereDoor(ctx, x, y, now);
+      }
+    }
+
+    // ------------------------------------------------------------ 超級原子彈
+    /** White flash, a shockwave and a mushroom cloud over the whole screen after the bomb (about 2.4 seconds). */
+    drawNuke(ctx, now) {
+      const t = now - this.nukeAt;
+      const DUR = 2400;
+      if (t < 0 || t > DUR) return;
+      const v = this.view;
+      ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+      const cx = v.w / 2, cy = v.h / 2, big = Math.max(v.w, v.h);
+      const flash = t < 160 ? t / 160 : Math.max(0, 1 - (t - 160) / 900);
+      // shockwave
+      const sk = Math.min(1, t / 1300);
+      ctx.lineWidth = 10 * (1 - sk) + 2;
+      ctx.strokeStyle = `rgba(255,${Math.round(210 - 90 * sk)},90,${0.75 * (1 - sk)})`;
+      ctx.beginPath(); ctx.arc(cx, cy, 20 + sk * big * 0.75, 0, 6.2832); ctx.stroke();
+      // mushroom cloud
+      if (t > 120) {
+        const g = Math.min(1, (t - 120) / 1000), e = 1 - Math.pow(1 - g, 3);
+        const fade = t > 1700 ? Math.max(0, 1 - (t - 1700) / 700) : 1;
+        const u = Math.min(v.w, v.h) / 260 * e;
         ctx.save();
-        ctx.translate(x, y + 17);
-        ctx.fillStyle = exit ? '#1e9a64' : '#e8780c';
-        rr(ctx, -6.5, -4.6, 13, 9.2, 4); ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 8px system-ui, sans-serif';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(exit ? '出' : '入', 0, 0.4);
+        ctx.translate(cx, cy + 40 * u);
+        ctx.globalAlpha = fade * 0.95;
+        const stem = ctx.createLinearGradient(0, 0, 0, -90 * u);
+        stem.addColorStop(0, '#ffb347'); stem.addColorStop(1, '#8a5a3a');
+        ctx.fillStyle = stem;
+        ctx.beginPath(); ctx.moveTo(-16 * u, 0); ctx.quadraticCurveTo(-8 * u, -50 * u, -12 * u, -90 * u); ctx.lineTo(12 * u, -90 * u); ctx.quadraticCurveTo(8 * u, -50 * u, 16 * u, 0); ctx.closePath(); ctx.fill();
+        const puff = [[0, -100, 34, '#7a4f3a'], [-30, -92, 24, '#8e5c3f'], [30, -92, 24, '#8e5c3f'], [-16, -118, 26, '#c9824a'], [16, -118, 26, '#c9824a'], [0, -130, 24, '#ffb347'], [0, -112, 16, '#ffe08a']];
+        for (const [px, py, pr, col] of puff) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px * u, py * u, pr * u, 0, 6.2832); ctx.fill(); }
+        ctx.fillStyle = 'rgba(255,200,120,0.5)'; // fire glow at the base
+        ctx.beginPath(); ctx.ellipse(0, 2 * u, 46 * u, 12 * u, 0, 0, 6.2832); ctx.fill();
         ctx.restore();
       }
+      if (flash > 0) { ctx.globalAlpha = Math.min(1, flash); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, v.w, v.h); }
+      ctx.globalAlpha = 1;
     }
 
     // ------------------------------------------------------------ frame
@@ -1036,7 +1058,7 @@
           ctx.fillStyle = '#e8780c';
           ctx.font = 'bold 12px system-ui, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText('入口', x, y - 26);
+          ctx.fillText('第一個門', x, y - 26);
         }
       }
       // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
@@ -1106,13 +1128,17 @@
       }
       ctx.restore();
       ctx.restore();
+      this.planes.update(clock, v);
+      this.planes.drawShadows(ctx, v);
       this.scn.drawSky(ctx, v, clock); // cloud shadows, clouds, drifting petals
+      this.planes.draw(ctx, v, now);
       const dt = Math.min(0.25, Math.max(0, (now - this._lastNow) / 1000));
       this._lastNow = now;
       const target = this.darkTarget();
       this.dark += (target - this.dark) * Math.min(1, dt * 2.5);
       if (Math.abs(target - this.dark) < 0.002) this.dark = target;
       if (this.dark > 0.01) this.drawNight(ctx, now);
+      this.drawNuke(ctx, now);
     }
 
     addEvents(events) {
@@ -1133,6 +1159,8 @@
           const col = style === 'blue' ? '#4aa8ff' : '#ff8fb8';
           this.fx.push({ kind: 'ring', node: e.from, color: col, t0: g.time, dur: 0.35, r: 14 });
           this.fx.push({ kind: 'ring', node: e.to, color: col, t0: g.time, dur: 0.45, r: 20 });
+        } else if (e.type === 'nuke') {
+          this.nukeAt = performance.now();
         } else if (e.type === 'kayray') {
           for (const b of g.buildings) this.fx.push({ kind: 'ring', node: b.node, color: '#ffd24d', t0: g.time, dur: 1.1, r: 60 });
         } else if (e.type === 'gameover') {

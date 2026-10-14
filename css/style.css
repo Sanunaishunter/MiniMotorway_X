@@ -80,10 +80,9 @@ html, body {
   padding: 6px var(--safe-r) calc(6px + var(--safe-b)) var(--safe-l);
   background: var(--bar);
   box-shadow: 0 -2px 12px rgba(40, 55, 45, 0.12);
-  overflow-x: auto; /* many tools on a narrow screen: scroll sideways instead of growing taller */
-  scrollbar-width: none;
+  flex-wrap: wrap; /* many tools: a second row underneath instead of scrolling sideways */
+  row-gap: 5px;
 }
-#toolbar::-webkit-scrollbar { display: none; }
 .tool {
   position: relative;
   width: 62px; height: 58px;
@@ -102,6 +101,7 @@ html, body {
 .tool.active { background: #fff; border-color: var(--ink); box-shadow: 0 3px 10px rgba(40, 55, 45, 0.18); }
 .tool.empty { opacity: 0.4; }
 .tool.locked { display: none; }
+.tool.nuke { background: rgba(255, 210, 63, 0.35); }
 .tool svg { width: 28px; height: 28px; fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .tool svg .stroke-thick { stroke-width: 6; }
 .tool svg .stroke-thick.g { stroke: #8e9bb0; }
@@ -178,6 +178,7 @@ html, body {
 /* ---------- modal ---------- */
 #modal {
   position: absolute; inset: 0;
+  z-index: 3; /* above the top bar and toolbar, so a tall card on a small screen is never cut off underneath them */
   display: grid; place-items: center;
   background: rgba(214, 226, 216, 0.5);
   backdrop-filter: blur(4px);
