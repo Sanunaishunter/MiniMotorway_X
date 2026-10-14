@@ -7,8 +7,8 @@
   const TAU = Math.PI * 2;
 
   const PAL = {
-    sand: { board: '#f3e4bb', light: 'rgba(255,247,218,0.65)', dark: 'rgba(226,170,128,0.26)', grain: 'rgba(150,112,70,0.30)', ripple: 'rgba(178,140,92,0.5)', tuft: 'rgba(122,132,74,0.7)' }, // 浮世繪: paper-cream sand
-    sea: { deep: '#2a5a8a', mid: '#3b78a8', line: '#dcecf2', ink: '#1b3a5e', damp: 'rgba(150,110,66,0.24)' }, // Prussian-blue sea
+    sand: { board: '#e0e7b0', light: 'rgba(249,250,222,0.65)', dark: 'rgba(140,178,106,0.26)', grain: 'rgba(104,128,66,0.30)', ripple: 'rgba(112,142,74,0.5)', tuft: 'rgba(92,124,62,0.7)' }, // 浮世繪: a pale sage-green plain on paper, bokashi patches
+    sea: { deep: '#2a5a8a', mid: '#3b78a8', line: '#dcecf2', ink: '#1b3a5e', damp: 'rgba(96,104,56,0.22)' }, // Prussian-blue sea
     patchLight: 'rgba(224,240,176,0.55)',
     patchDark: 'rgba(120,170,100,0.20)',
     tuft: 'rgba(96,150,84,0.55)',
@@ -126,7 +126,7 @@
               const snowy = this.isSnowAt(tx, ty);
               const grove = sample(sak, c, r) > 0.68;
               let kind = 'round', variant = Math.floor(rnd() * PAL.round.length), size = 0.85 + rnd() * 0.3;
-              if (beach) { // black pines (黒松), dune shrubs and sea-worn rocks
+              if (beach) { // black pines (黒松), shrubs and sea-worn rocks
                 if (kindRoll < 0.62) { kind = 'pine'; size = 0.9 + rnd() * 0.3; }
                 else if (kindRoll < 0.8) { kind = 'bush'; size = 0.8 + rnd() * 0.3; }
                 else if (kindRoll < 0.985) { kind = 'rock'; size = 0.8 + rnd() * 0.5; }
@@ -151,7 +151,7 @@
       for (const [c, r] of toriiAt) this.trees.push({ x: (c + 0.5) * C, y: (r + 0.5) * C + 14, kind: 'torii', variant: 0, s: 1.05, ph: 0, snow: false, cell: -1 });
       if (this.fuji) { // the mountain's foot is bare: no trees on the lower slopes
         const f = this.fuji;
-        this.trees = this.trees.filter((t) => !(Math.abs(t.x - f.x) < f.w * 0.5 && t.y > f.y - f.h * 0.35 && t.y < f.y + f.h * 0.12));
+        this.trees = this.trees.filter((t) => !(t.y > f.y - f.h && t.y < f.y + f.h * 0.12 && Math.abs(t.x - f.x) < f.w * (0.08 + 0.42 * Math.min(1, (t.y - (f.y - f.h)) / f.h)) + 8));
       }
       this.trees.sort((a, b) => a.y - b.y);
 
@@ -162,7 +162,7 @@
       for (let i = 0; i < area / 14; i++) this.patches.push({ x: rx(), y: ry(), r: 26 + rnd() * 50, light: rnd() < 0.55 });
       const beachGround = this.theme === 'beach';
       for (let i = 0; i < area * (beachGround ? 0.35 : 1.1); i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.tufts.push({ x, y, a: (rnd() - 0.5) * 0.9, l: 3 + rnd() * 3 }); }
-      for (let i = 0; i < area / 5; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.flowers.push({ x, y, c: beachGround ? ['#f7cdbd', '#fff3e4', '#e9b9a2'][Math.floor(rnd() * 3)] : PAL.flowers[Math.floor(rnd() * PAL.flowers.length)], r: beachGround ? 1.3 + rnd() * 1.1 : 1 + rnd() * 0.9 }); } // (beach: little shells)
+      for (let i = 0; i < area / 5; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.flowers.push({ x, y, c: beachGround ? ['#f7cdbd', '#fff6e0', '#f3df8a'][Math.floor(rnd() * 3)] : PAL.flowers[Math.floor(rnd() * PAL.flowers.length)], r: beachGround ? 1.3 + rnd() * 1.1 : 1 + rnd() * 0.9 }); } // (beach: little shells)
       this.grain = []; this.ripples = [];
       if (beachGround) {
         for (let i = 0; i < area * 2.2; i++) { const x = rx(), y = ry(); if (!this.isWaterAt(x, y)) this.grain.push(x, y); } // paper / sand grain

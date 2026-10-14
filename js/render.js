@@ -18,9 +18,9 @@
     hwEdge: '#3f8a63', // expressway verge (green)
     hw: '#59616d', // darker expressway asphalt
     ink: '#2f3a4b',
-    beachBoard: '#f3e4bb', // ukiyo-e sand
-    beachDot: 'rgba(150,112,70,0.2)',
-    beachWet: '#e4d09c', // wet sand along the shore
+    beachBoard: '#e0e7b0', // ukiyo-e plain
+    beachDot: 'rgba(104,128,66,0.2)',
+    beachWet: '#c9d394', // damp bank along the water
     beachSea: '#2a5a8a',
   };
   const MAP_THEMES = ['snow', 'forest', 'beach'];

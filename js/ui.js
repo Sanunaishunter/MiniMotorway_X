@@ -608,8 +608,8 @@
 
   // map: random (every new game gets one of the three) or a fixed one: white snow country (Hokkaido), green forest, ukiyo-e beach
   const MAP_MODES = ['random', 'snow', 'forest', 'beach'];
-  const MAP_NAMES = { random: '隨機(每局換地圖)', snow: '雪國(全白雪地)', forest: '森林(含雪地)', beach: '海灘(浮世繪)' };
-  const THEME_NAMES = { snow: '雪國', forest: '森林', beach: '海灘(浮世繪)' };
+  const MAP_NAMES = { random: '隨機(每局換地圖)', snow: '雪國(全白雪地)', forest: '森林(含雪地)', beach: '平原(浮世繪)' };
+  const THEME_NAMES = { snow: '雪國', forest: '森林', beach: '平原(浮世繪)' };
   function showMapUi() {
     const m = renderer.mapMode;
     for (const k of MAP_MODES) $('ico' + k[0].toUpperCase() + k.slice(1)).style.display = m === k ? '' : 'none';
