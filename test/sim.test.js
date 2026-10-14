@@ -1173,5 +1173,24 @@ console.log('21. sports cars (Mazda 787B / Porsche 911): one is worth five ordin
   }
 }
 
+console.log('22. a destination with no road keeps its trips and overflows (it is not rescued by a connected one of the same colour)');
+{
+  const g = new MM.Game({ seed: 4 });
+  const h = g.houses[0], a = g.dests.find((x) => x.color === h.color);
+  g.spawnRandom('dest', h.color);
+  const b = g.dests.filter((x) => x.color === h.color && x !== a)[0];
+  check(!!b && connect(g, h.node, a.node), 'one destination of the colour is wired, the other has no road');
+  let delivered = 0;
+  for (let t = 0; t < 25 * 60 * 4 && g.state === 'running'; t++) {
+    g.update(0.04);
+    if (g.state === 'upgrade') g.chooseUpgrade(0);
+    for (const e of g.events) if (e.type === 'deliver') delivered++;
+    g.events.length = 0;
+  }
+  check(delivered > 0, 'cars still drive to the wired destination (' + delivered + ')');
+  check(b.pins >= MM.CFG.PIN_LIMIT && b.inbound === 0, 'the unwired destination collects pins (' + b.pins + ') and no car is sent to it');
+  check(g.state === 'collapse', 'and it overflows and collapses the city (state ' + g.state + ')');
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

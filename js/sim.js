@@ -643,24 +643,21 @@
     dispatch(h) {
       const w = this.world;
       if (!h.queue.length) return false;
-      let trip = h.queue[0];
-      let path = this.route(h.node, trip.node, -1);
-      if (!path) {
-        const set = new Set();
-        for (const d of this.dests) if (d.color === h.color) set.add(d.node);
-        path = this.route(h.node, set, -1);
-        if (path) {
-          const nd = w.bld[path[path.length - 1]];
-          trip.pins--;
-          nd.pins++;
-          h.queue[0] = nd;
-          trip = nd;
-        }
+      // a trip belongs to its destination: one that cannot be reached stays in the queue (its pins keep piling up there and
+      // eventually overflow), while the house carries on with the trips that can be driven
+      let trip = null, path = null, at = -1;
+      const tried = new Set();
+      for (let i = 0; i < h.queue.length && !path; i++) {
+        const t = h.queue[i];
+        if (tried.has(t)) continue;
+        tried.add(t);
+        const p = this.route(h.node, t.node, -1);
+        if (p) { trip = t; path = p; at = h.queue.indexOf(t); }
       }
       if (!path) return false;
       const lane = h.node * 4 + w.dirOf(h.node, path[1]);
       if (!this.laneClear(lane, CFG.GAP * 1.4)) return false;
-      h.queue.shift();
+      h.queue.splice(at, 1);
       const id = this.nextId++;
       const car = { id, weight: this.isSport(id) ? CFG.SPORT_WEIGHT : 1, color: h.color, path, i: 0, s: 0, lane, dest: trip, house: h, held: -1, resLane: -1, resSlot: -1, slot: 0, nslot: 0, nslotFor: -1, pslot: 0, dead: false, stamp: -1, idle: 0, v: 0 };
       trip.inbound++;
