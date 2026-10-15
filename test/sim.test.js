@@ -1194,7 +1194,7 @@ console.log('22. a destination with no road keeps its trips and overflows (it is
   check(g.state === 'collapse', 'and it overflows and collapses the city (state ' + g.state + ')');
 }
 
-console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes side by side) round a 6x6 lawn');
+console.log('23. mega roundabout: a 5x5 one-way ring of four-lane road (4 lanes side by side) round a 3x3 lawn');
 {
   const mk = () => {
     let g, o = -1;
@@ -1204,12 +1204,12 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   };
   const { g, tl } = mk();
   const w = g.world;
-  check(g.placeMega(tl).reason === 'none' && g.checkMega(tl) === null, 'needs inventory; the 8x8 area is free');
+  check(g.placeMega(tl).reason === 'none' && g.checkMega(tl) === null, 'needs inventory; the 5x5 area is free');
   g.inv.mega = 2;
   check(g.placeMega(tl).ok && g.inv.mega === 1, 'the mega roundabout is placed');
   const b = [...g.bigs.values()][0];
-  check(b.kind === 'mega' && b.nodes.length === 28 && b.inner.length === 36, 'a ring of 28 nodes round 36 lawn nodes');
-  check(b.nodes.every((n, i) => { const m = b.nodes[(i + 1) % 28]; return w.adjacent(n, m) && w.edgeBetween(n, m) && !w.edgeBetween(m, n) && w.isWideBetween(n, m); }), 'every ring edge is four-lane and one-way (counter-clockwise)');
+  check(b.kind === 'mega' && b.nodes.length === 16 && b.inner.length === 9, 'a ring of 16 nodes round 9 lawn nodes');
+  check(b.nodes.every((n, i) => { const m = b.nodes[(i + 1) % 16]; return w.adjacent(n, m) && w.edgeBetween(n, m) && !w.edgeBetween(m, n) && w.isWideBetween(n, m); }), 'every ring edge is four-lane and one-way (counter-clockwise)');
   check(b.nodes.every((n) => w.ringId[n] === b.id) && b.inner.every((n) => w.island[n] === b.id), 'ring and lawn are marked');
   check(g.slotsOf(b.nodes[0] * 4 + w.dirOf(b.nodes[0], b.nodes[1])) === 4, 'the ring has four lanes in its one direction');
   const lawn = b.inner[0];
@@ -1217,7 +1217,7 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   check(!g.removeEdge(b.nodes[0], b.nodes[1]).ok, 'a ring segment cannot be torn out alone');
   g.inv.mega = 1;
   check(g.checkMega(tl) === null, 'a second one may overlap the first (the first is taken apart)');
-  check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - 8) * w.cols + (w.cols - 8), 'the footprint is nudged inward at the board edge');
+  check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - MM.CFG.MEGA_SIZE) * w.cols + (w.cols - MM.CFG.MEGA_SIZE), 'the footprint is nudged inward at the board edge');
 
   // traffic: cars all round the ring at once use the four lanes and never jam
   let err = null, done = 0, maxSlot = 0, spawned = 0;
@@ -1227,9 +1227,9 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
   for (let t = 0; t < 25 * 90; t++) {
     for (let k = 0; k < 2; k++) {
-      const st = Math.floor(rnd() * 28), len = 6 + Math.floor(rnd() * 20);
+      const st = Math.floor(rnd() * 16), len = 6 + Math.floor(rnd() * 20);
       const path = [];
-      for (let j = 0; j <= len; j++) path.push(b.nodes[(st + j) % 28]);
+      for (let j = 0; j <= len; j++) path.push(b.nodes[(st + j) % 16]);
       const car = fakeCar(g, path);
       g.cars.pop();
       if (g.laneClear(car.lane, MM.CFG.GAP * 1.4, car.slot)) { g.cars.push(car); spawned++; }
@@ -1243,7 +1243,7 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   check(maxSlot === 3 && done > spawned * 0.5, 'cars use all four lanes (outermost slot ' + maxSlot + ') and flow (' + done + ' of ' + spawned + ' arrived)');
 
   // removing it clears the ring and the lawn and refunds the piece
-  check(g.removeBigAt(b.inner[0]) && g.inv.mega === 2 && !g.bigs.size && b.nodes.every((n) => !w.ringId[n] && !w.edgeBetween(n, b.nodes[(b.nodes.indexOf(n) + 1) % 28])) && b.inner.every((n) => !w.island[n]), 'erasing the lawn removes it and refunds the mega roundabout');
+  check(g.removeBigAt(b.inner[0]) && g.inv.mega === 2 && !g.bigs.size && b.nodes.every((n) => !w.ringId[n] && !w.edgeBetween(n, b.nodes[(b.nodes.indexOf(n) + 1) % 16])) && b.inner.every((n) => !w.island[n]), 'erasing the lawn removes it and refunds the mega roundabout');
 
   // roads running through the footprint are cleared and refunded when it is laid
   const m2 = mk();
@@ -1255,12 +1255,12 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
     const m3 = mk();
     const g3 = m3.g, w3 = g3.world, o = m3.tl, W = w3.cols;
     g3.inv.mega = 2; g3.inv.light = 3; g3.inv.tun = 2; g3.inv.tp = 0; g3.inv.big = 1; g3.inv.hand = 0;
-    const house = g3.addBuilding('house', 0, o + 2 * W + 2), dest = g3.addBuilding('dest', 0, o + 5 * W + 5);
+    const house = g3.addBuilding('house', 0, o + 2 * W + 2), dest = g3.addBuilding('dest', 0, o + 3 * W + 3);
     const road = (a, b) => g3.addEdge(a, b, 1);
     for (let k = 0; k < 6; k++) road(o + 3 * W + k, o + 3 * W + k + 1); // a road along row 3
     for (let k = 1; k < 4; k++) road(o + k * W + 4, o + (k + 1) * W + 4); // a crossing road
     g3.placeFeature(o + 3 * W + 4, 'light');
-    g3.addTunnel(o + 6 * W, o + 6 * W + 3);
+    g3.addTunnel(o + 1 * W, o + 1 * W + 3);
     const before = { light: g3.inv.light, tun: g3.inv.tun };
     const nb = g3.buildings.length;
     const r3 = g3.placeMega(o);

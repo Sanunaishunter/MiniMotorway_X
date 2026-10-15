@@ -10,7 +10,7 @@
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
     { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
-    { id: 'mega', amount: 1, title: '超大圓環', desc: '8×8 格的單向四線道圓環,中央是大片綠地:大量車流可以同時繞行。放下去會清掉範圍內原本的路。' },
+    { id: 'mega', amount: 1, title: '超大圓環', desc: '5×5 格的單向四線道圓環,中央是綠地:大量車流可以同時繞行。範圍內原本的東西會自動移開。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
 
@@ -56,7 +56,7 @@
       this.over = null;
       this.colorsUnlocked = 0;
       this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, mega: 0, tp: 0, nuke: 0, hand: 0 };
-      this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (8x8, four lanes), center, nodes[] in circulation order, inner[] island nodes}
+      this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (5x5, four lanes), center, nodes[] in circulation order, inner[] island nodes}
       this.bigSeq = 0;
       this.nextId = 1;
       this.houseTimer = 14;
@@ -275,7 +275,7 @@
       return null;
     }
 
-    /** Why a mega roundabout whose 8x8 footprint has its top-left corner at `tl` cannot be built ('edge' / 'full'), or null.
+    /** Why a mega roundabout whose 5x5 footprint has its top-left corner at `tl` cannot be built ('edge' / 'full'), or null.
      *  Whatever stands in the footprint is moved out of the way when it is built, so only the board edge and a lack of room to move the buildings to matter. */
     checkMega(tl) {
       const w = this.world;
@@ -366,15 +366,15 @@
       return { ok: true };
     }
 
-    /** The 8x8 mega roundabout (超大四線道圓環): a one-way ring of four-lane road, 28 nodes, round a 6x6 lawn. `tl` = top-left node. */
-    /** The top-left node of the 8x8 footprint for a click on `n` (nudged inward so it always fits on the board). */
+    /** The 5x5 mega roundabout (超大四線道圓環): a one-way ring of four-lane road, 16 nodes, round a 3x3 lawn. `tl` = top-left node. */
+    /** The top-left node of the footprint for a click on `n` (nudged inward so it always fits on the board). */
     megaAnchor(n) {
       const w = this.world, S = CFG.MEGA_SIZE;
-      const col = Math.max(0, Math.min(w.cols - S, w.col(n) - 3)), row = Math.max(0, Math.min(w.rows - S, w.row(n) - 3));
+      const col = Math.max(0, Math.min(w.cols - S, w.col(n) - ((S - 1) >> 1))), row = Math.max(0, Math.min(w.rows - S, w.row(n) - ((S - 1) >> 1)));
       return row * w.cols + col;
     }
 
-    /** Everything standing in the 8x8 footprint gets out of the way: buildings move to the nearest free spot, lights / roundabouts /
+    /** Everything standing in the footprint gets out of the way: buildings move to the nearest free spot, lights / roundabouts /
      *  overpasses, portals, tunnel ends and other big roundabouts go back to stock. (Roads inside are replaced by the ring itself.) */
     clearFootprint(tl) {
       const w = this.world, S = CFG.MEGA_SIZE, col0 = w.col(tl), row0 = w.row(tl);
