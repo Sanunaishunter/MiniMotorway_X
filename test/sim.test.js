@@ -1215,7 +1215,8 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   const lawn = b.inner[0];
   check(g.addEdge(lawn, lawn + 1, 1).reason === 'island', 'no road can be built on the lawn');
   check(!g.removeEdge(b.nodes[0], b.nodes[1]).ok, 'a ring segment cannot be torn out alone');
-  check(g.placeMega(tl).reason === 'blocked', 'a second one cannot overlap the first');
+  g.inv.mega = 1;
+  check(g.checkMega(tl) === null, 'a second one may overlap the first (the first is taken apart)');
   check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - 8) * w.cols + (w.cols - 8), 'the footprint is nudged inward at the board edge');
 
   // traffic: cars all round the ring at once use the four lanes and never jam
@@ -1249,6 +1250,31 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   m2.g.inv.mega = 1; m2.g.inv.wide = 0;
   const w2 = m2.g.world, c0 = m2.tl + 3 * w2.cols + 1;
   m2.g.addEdge(c0 - 1, c0, 1); m2.g.addEdge(c0, c0 + 1, 1); m2.g.addEdge(c0 + 1, c0 + 2, 1);
+  // everything in the footprint moves out of the way: buildings, lights, a portal pair, a tunnel, another big roundabout
+  {
+    const m3 = mk();
+    const g3 = m3.g, w3 = g3.world, o = m3.tl, W = w3.cols;
+    g3.inv.mega = 2; g3.inv.light = 3; g3.inv.tun = 2; g3.inv.tp = 0; g3.inv.big = 1; g3.inv.hand = 0;
+    const house = g3.addBuilding('house', 0, o + 2 * W + 2), dest = g3.addBuilding('dest', 0, o + 5 * W + 5);
+    const road = (a, b) => g3.addEdge(a, b, 1);
+    for (let k = 0; k < 6; k++) road(o + 3 * W + k, o + 3 * W + k + 1); // a road along row 3
+    for (let k = 1; k < 4; k++) road(o + k * W + 4, o + (k + 1) * W + 4); // a crossing road
+    g3.placeFeature(o + 3 * W + 4, 'light');
+    g3.addTunnel(o + 6 * W, o + 6 * W + 3);
+    const before = { light: g3.inv.light, tun: g3.inv.tun };
+    const nb = g3.buildings.length;
+    const r3 = g3.placeMega(o);
+    const S = MM.CFG.MEGA_SIZE;
+    const inFoot = (n) => w3.col(n) >= w3.col(o) && w3.col(n) < w3.col(o) + S && w3.row(n) >= w3.row(o) && w3.row(n) < w3.row(o) + S;
+    check(r3.ok, 'laid on top of buildings, roads, a light and a tunnel');
+    check(g3.buildings.length === nb && !inFoot(house.node) && !inFoot(dest.node) && w3.bld[house.node] === house && w3.bld[dest.node] === dest, 'both buildings were moved out of the footprint, none lost');
+    check(g3.buildings.every((b, i) => g3.buildings.every((c, j) => i === j || Math.abs(w3.col(b.node) - w3.col(c.node)) + Math.abs(w3.row(b.node) - w3.row(c.node)) >= 2)), 'and none of them landed next to another');
+    check(g3.inv.light === before.light + 1 && g3.inv.tun === before.tun + 1 && !w3.tun.size, 'the light and the tunnel went back to stock');
+    check(!g3.world.feat.some((f, n) => f && inFoot(n)), 'nothing else is left standing in the footprint');
+    const err3 = sanity(g3);
+    check(!err3, 'bookkeeping is consistent (' + err3 + ')');
+  }
+
   check(m2.g.placeMega(m2.tl).ok && !w2.rawBetween(c0 - 1, c0) && !w2.rawBetween(c0, c0 + 1) && !w2.rawBetween(c0 + 1, c0 + 2), 'roads inside the footprint are cleared when the ring is laid');
 }
 

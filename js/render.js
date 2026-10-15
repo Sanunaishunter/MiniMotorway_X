@@ -1187,13 +1187,15 @@
       if (this.tool === 'mega' && this.hover >= 0 && g.canEdit()) {
         const tl = g.megaAnchor(this.hover), bad = g.checkMega(tl);
         const x = this.nodeX(tl) - C / 2, y = this.nodeY(tl) - C / 2, S = MM.CFG.MEGA_SIZE;
-        ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : 'rgba(53,196,140,0.18)';
-        ctx.strokeStyle = bad ? 'rgba(235,60,70,0.7)' : 'rgba(30,150,100,0.8)';
+        const busy = !bad && !g.megaClear(tl); // something stands there: it will be moved out of the way (amber)
+        ctx.fillStyle = bad ? 'rgba(235,60,70,0.16)' : busy ? 'rgba(240,170,40,0.18)' : 'rgba(53,196,140,0.18)';
+        ctx.strokeStyle = bad ? 'rgba(235,60,70,0.7)' : busy ? 'rgba(214,138,0,0.85)' : 'rgba(30,150,100,0.8)';
         ctx.lineWidth = 2.4;
         ctx.setLineDash([8, 6]);
         rr(ctx, x, y, S * C, S * C, 26);
         ctx.fill(); ctx.stroke();
         ctx.setLineDash([]);
+        if (busy) { ctx.fillStyle = '#9a6200'; ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('範圍內的東西會自動移開', x + S * C / 2, y - 6); }
       }
       // big roundabout: show the 3x3 footprint under the pointer (green = fits, red = blocked)
       if (this.tool === 'big' && this.hover >= 0 && g.canEdit()) {

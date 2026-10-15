@@ -275,17 +275,57 @@
       return null;
     }
 
-    /** Why a mega roundabout whose 8x8 footprint has its top-left corner at `tl` cannot be built ('edge' / 'blocked'), or null. */
+    /** Why a mega roundabout whose 8x8 footprint has its top-left corner at `tl` cannot be built ('edge' / 'full'), or null.
+     *  Whatever stands in the footprint is moved out of the way when it is built, so only the board edge and a lack of room to move the buildings to matter. */
     checkMega(tl) {
       const w = this.world;
-      if (tl < 0) return 'blocked';
+      if (tl < 0) return 'edge';
       const col = w.col(tl), row = w.row(tl), S = CFG.MEGA_SIZE;
       if (col < 0 || row < 0 || col + S > w.cols || row + S > w.rows) return 'edge';
+      const inside = [];
+      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) { const b = w.bld[(row + dy) * w.cols + col + dx]; if (b) inside.push(b); }
+      if (inside.length && !this.homesFor(inside, tl)) return 'full';
+      return null;
+    }
+
+    /** Whether the footprint at `tl` is free of buildings and everything else already (the preview shows a hint when it is not). */
+    megaClear(tl) {
+      const w = this.world, col = w.col(tl), row = w.row(tl), S = CFG.MEGA_SIZE;
       for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) {
         const n = (row + dy) * w.cols + col + dx;
-        if (w.water[n] || w.bld[n] || w.ringId[n] || w.island[n] || w.feat[n] || w.portal.has(n) || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return 'blocked';
+        if (w.bld[n] || w.feat[n] || w.ringId[n] || w.island[n] || w.portal.has(n) || w.deg(n) > 0 || [0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) return false;
       }
-      return null;
+      return true;
+    }
+
+    /** Free spots (nearest first) outside the footprint at `tl` for each of `blds`, or null if the map has no room. Does not change anything. */
+    homesFor(blds, tl) {
+      const w = this.world, S = CFG.MEGA_SIZE, col0 = w.col(tl), row0 = w.row(tl);
+      const inFoot = (n) => w.col(n) >= col0 && w.col(n) < col0 + S && w.row(n) >= row0 && w.row(n) < row0 + S;
+      const moving = new Set(blds);
+      const taken = [];
+      const homes = [];
+      for (const b of blds) {
+        let best = -1;
+        for (const gap of [3, 2]) {
+          let bd = Infinity;
+          for (let n = 0; n < w.n; n++) {
+            if (inFoot(n) || w.water[n] || w.bld[n] || w.feat[n] || w.island[n] || w.ringId[n] || w.portal.has(n) || w.deg(n) > 0 || taken.includes(n)) continue;
+            if ([0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) continue;
+            const c = w.col(n), r = w.row(n);
+            const d0 = Math.abs(c - w.col(b.node)) + Math.abs(r - w.row(b.node));
+            if (d0 >= bd) continue;
+            let ok = true;
+            for (const o of this.buildings) if (!moving.has(o) && Math.abs(w.col(o.node) - c) + Math.abs(w.row(o.node) - r) < gap) { ok = false; break; }
+            for (const t of taken) if (ok && Math.abs(w.col(t) - c) + Math.abs(w.row(t) - r) < gap) ok = false;
+            if (ok) { bd = d0; best = n; }
+          }
+          if (best >= 0) break;
+        }
+        if (best < 0) return null;
+        taken.push(best); homes.push(best);
+      }
+      return homes;
     }
 
     /** Lay a one-way ring along `ring` (counter-clockwise order) round the nodes in `inner`, clearing whatever ran inside the footprint. */
@@ -334,6 +374,23 @@
       return row * w.cols + col;
     }
 
+    /** Everything standing in the 8x8 footprint gets out of the way: buildings move to the nearest free spot, lights / roundabouts /
+     *  overpasses, portals, tunnel ends and other big roundabouts go back to stock. (Roads inside are replaced by the ring itself.) */
+    clearFootprint(tl) {
+      const w = this.world, S = CFG.MEGA_SIZE, col0 = w.col(tl), row0 = w.row(tl);
+      const nodes = [];
+      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) nodes.push((row0 + dy) * w.cols + col0 + dx);
+      const blds = nodes.map((n) => w.bld[n]).filter(Boolean);
+      const homes = blds.length ? this.homesFor(blds, tl) : [];
+      blds.forEach((b, i) => this.relocate(b, homes[i]));
+      for (const n of nodes) {
+        if (w.island[n] || w.ringId[n]) this.removeBig(w.island[n] || w.ringId[n]);
+        if (w.portal.has(n)) this.removePortal(n);
+        while ([0, 1, 2, 3].some((d) => w.tun.has(n * 4 + d))) this.removeTunnelAt(n, true);
+        if (w.feat[n]) this.removeFeature(n);
+      }
+    }
+
     placeMega(tl) {
       const w = this.world;
       if (!this.canEdit()) return { ok: false, reason: 'state' };
@@ -349,6 +406,7 @@
       const inner = [];
       for (let dy = 1; dy < S - 1; dy++) for (let dx = 1; dx < S - 1; dx++) inner.push(at(dx, dy));
       this.inv.mega--;
+      this.clearFootprint(tl);
       this.buildRing('mega', tl, ring, inner, true);
       return { ok: true };
     }
@@ -521,15 +579,20 @@
       if (!this.canEdit()) return { ok: false, reason: 'state' };
       const bad = this.checkMove(from, to);
       if (bad) return { ok: false, reason: bad };
-      const b = w.bld[from];
+      this.relocate(w.bld[from], to);
+      this.validateCars();
+      return { ok: true };
+    }
+
+    /** Put building `b` down on node `to` (cars heading for it are recalled; the roads stay where they are). */
+    relocate(b, to) {
+      const w = this.world, from = b.node;
       for (const car of this.cars) if (!car.dead && car.dest === b) this.killCar(car, true); // cars heading for a destination that just left
       w.bld[from] = null;
       b.node = to;
       w.bld[to] = b;
       this.cleanFeatures([from]);
-      this.validateCars();
       this.events.push({ type: 'move', from, node: to, color: b.color });
-      return { ok: true };
     }
 
     // ---- 超級原子彈: wipe every road off the map in one go
