@@ -10,6 +10,8 @@
     ACCEL: 6, // cells / s^2
     HW_MULT: 2.1, // highway speed multiplier
     TUN_MULT: 1.5, // tunnel speed multiplier
+    FLY_SPEED: 5, // 起飛啦: cells per second of a flying car (straight line to its destination)
+    FLY_MIN: 0.9, // shortest flight, in seconds (so a short hop is still visible)
     WIDE_GAP: 1.18, // following-gap multiplier on a four-lane road: 2 lanes / 1.18 = about 1.7x the flow of a two-lane road
     WIDE_HEADWAY: 0.28, // seconds between cars entering a junction that touches a four-lane road while another car is still inside
     TUNNEL_MIN: 2, // shortest / longest tunnel, in cells between its two portals

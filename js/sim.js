@@ -34,6 +34,8 @@
       this.lights = new Map(); // node -> {green, timer, pending, waiting:[bool,bool]}
       this.lanes = new Map(); // laneId -> cars (rebuilt every step)
       this.cars = [];
+      this.flyers = []; // 起飛啦: cars in the air, flying straight to their destination (outside the lane system)
+      this.flyMode = false; // while true every car flies instead of driving
       this.buildings = [];
       this.houses = [];
       this.dests = [];
@@ -588,6 +590,14 @@
     relocate(b, to) {
       const w = this.world, from = b.node;
       for (const car of this.cars) if (!car.dead && car.dest === b) this.killCar(car, true); // cars heading for a destination that just left
+      for (const f of this.flyers) { // flying cars too: back to their house's queue
+        if (f.dead || f.dest !== b) continue;
+        f.dead = true;
+        b.inbound = Math.max(0, (b.inbound || 0) - 1);
+        f.house.queue.unshift(b);
+        this.events.push({ type: 'lost', node: from, color: f.color });
+      }
+      this.flyers = this.flyers.filter((f) => !f.dead);
       w.bld[from] = null;
       b.node = to;
       w.bld[to] = b;
@@ -794,6 +804,12 @@
     dispatch(h) {
       const w = this.world;
       if (!h.queue.length) return false;
+      if (this.flyMode) { // no road needed: the car takes off from the house at once
+        const trip = h.queue.shift();
+        trip.inbound++;
+        this.launch(w.col(h.node), w.row(h.node), trip, h);
+        return true;
+      }
       // a trip belongs to its destination: one that cannot be reached stays in the queue (its pins keep piling up there and
       // eventually overflow), while the house carries on with the trips that can be driven
       let trip = null, path = null, at = -1;
@@ -832,6 +848,36 @@
       }
       dest.pins = Math.max(0, dest.pins - done);
       return done;
+    }
+
+    /** Put a flying car in the air at cell position (x, y), heading straight for `dest`. */
+    launch(x, y, dest, house, weight) {
+      const w = this.world;
+      const x1 = w.col(dest.node), y1 = w.row(dest.node);
+      const dur = Math.max(CFG.FLY_MIN, Math.hypot(x1 - x, y1 - y) / CFG.FLY_SPEED);
+      const id = this.nextId++;
+      this.flyers.push({ id, weight: weight || (this.isSport(id) ? CFG.SPORT_WEIGHT : 1), color: dest.color, dest, house, x0: x, y0: y, x1, y1, t: 0, dur, dead: false });
+    }
+
+    /** A car on the road lifts off from where it is. */
+    takeoff(car) {
+      if (car.dead) return;
+      const w = this.world, a = car.path[car.i], b = car.path[car.i + 1];
+      const x = w.col(a) + (w.col(b) - w.col(a)) * car.s, y = w.row(a) + (w.row(b) - w.row(a)) * car.s;
+      this.killCar(car, false); // frees its junction lock and reservation, keeps the trip (dest.inbound stays counted)
+      this.launch(x, y, car.dest, car.house, car.weight);
+    }
+
+    /** 起飛啦: from now on every car flies (cars already on the road lift off at once). Toggles when `on` is omitted. */
+    setFlyMode(on) {
+      if (!this.canEdit()) return false;
+      this.flyMode = on == null ? !this.flyMode : !!on;
+      if (this.flyMode) {
+        for (const car of this.cars) this.takeoff(car);
+        this.cars = this.cars.filter((c) => !c.dead);
+      }
+      this.events.push({ type: 'fly', on: this.flyMode });
+      return true;
     }
 
     killCar(car, requeue) {
@@ -1111,6 +1157,15 @@
         }
       }
       this.cars = this.cars.filter((c) => !c.dead);
+
+      // flying cars: straight line, no lanes, no junctions
+      if (this.flyers.length) {
+        for (const f of this.flyers) {
+          f.t += dt / f.dur;
+          if (f.t >= 1) this.deliver(f);
+        }
+        this.flyers = this.flyers.filter((f) => !f.dead);
+      }
 
       // traffic lights
       for (const [node, L] of this.lights) {

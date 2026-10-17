@@ -321,8 +321,6 @@
 
     drawCar(ctx, car, elevated) {
       const pose = this.carPose(car);
-      const col = MM.COLORS[car.color];
-      const kind = this.carKind(car);
       ctx.save();
       ctx.translate(pose.x, pose.y - (elevated ? 3 : 0));
       ctx.rotate(pose.a);
@@ -332,6 +330,27 @@
       ctx.fillStyle = elevated ? 'rgba(20,30,50,0.28)' : 'rgba(0,0,0,0.18)';
       rr(ctx, -5.8, elevated ? 0.4 : -2.8, 12.4, 7, 2.2);
       ctx.fill();
+      this.drawCarBody(ctx, car);
+      ctx.restore();
+      this.drawWeightBadge(ctx, car.weight, pose.x, pose.y - (elevated ? 3 : 0) - 8.5);
+    }
+
+    /** A gold badge over a sports car: this one is worth `weight` cars. */
+    drawWeightBadge(ctx, weight, x, y) {
+      if ((weight || 1) <= 1) return;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = '#ffc21a'; ctx.strokeStyle = '#a8740a'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(0, 0, 3.3, 0, 6.2832); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#5a3a00'; ctx.font = 'bold 5.2px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(weight), 0, 0.3);
+      ctx.restore();
+    }
+
+    /** The car's body, centred on the origin and facing +x (shared by driving and flying cars). */
+    drawCarBody(ctx, car) {
+      const col = MM.COLORS[car.color];
+      const kind = this.carKind(car);
       ctx.fillStyle = col.main;
       ctx.strokeStyle = col.dark;
       ctx.lineWidth = 1;
@@ -384,16 +403,42 @@
           rr(ctx, -2.2, -1.3, 2.6, 2.6, 0.8); ctx.fill(); ctx.stroke();
         }
       }
+    }
+
+    /** 起飛啦: a car with wings and a jet flame, rising off the road and flying straight to its destination. */
+    drawFlyer(ctx, f, now) {
+      const u = f.t * f.t * (3 - 2 * f.t); // ease in / out along the flight line
+      const x = (f.x0 + (f.x1 - f.x0) * u + 0.5) * C, y = (f.y0 + (f.y1 - f.y0) * u + 0.5) * C;
+      const a = Math.atan2(f.y1 - f.y0, f.x1 - f.x0);
+      const lift = Math.sin(Math.PI * Math.min(1, f.t)); // 0 on the ground, 1 at the top of the flight
+      const alt = 26 * lift, sc = 1 + 0.45 * lift;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(a);
+      ctx.fillStyle = `rgba(0,0,0,${0.2 - 0.1 * lift})`; // shadow stays on the ground
+      rr(ctx, -5.8, -2.8, 12.4, 7, 2.2);
+      ctx.fill();
       ctx.restore();
-      if ((car.weight || 1) > 1) { // a gold "5" badge: this one is worth five cars
-        ctx.save();
-        ctx.translate(pose.x, pose.y - (elevated ? 3 : 0) - 8.5);
-        ctx.fillStyle = '#ffc21a'; ctx.strokeStyle = '#a8740a'; ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.arc(0, 0, 3.3, 0, 6.2832); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#5a3a00'; ctx.font = 'bold 5.2px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(String(car.weight), 0, 0.3);
-        ctx.restore();
+      ctx.save();
+      ctx.translate(x, y - alt);
+      ctx.rotate(a);
+      ctx.scale(sc, sc);
+      const flap = 0.85 + 0.15 * Math.sin(now / 55 + f.id);
+      ctx.fillStyle = '#f4f7fb'; ctx.strokeStyle = '#8e9bb0'; ctx.lineWidth = 0.8;
+      for (const sgn of [-1, 1]) { // wings
+        ctx.beginPath();
+        ctx.moveTo(1.6, sgn * 3);
+        ctx.lineTo(-2.4, sgn * 3);
+        ctx.lineTo(-4.4, sgn * 10.5 * flap);
+        ctx.lineTo(-1.2, sgn * 10.5 * flap);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
       }
+      const flame = 3 + 2.4 * Math.sin(now / 38 + f.id) * lift + 2.4 * lift;
+      ctx.fillStyle = '#ffb02e'; // jet flame out of the back
+      ctx.beginPath(); ctx.moveTo(-6, -1.8); ctx.lineTo(-6 - flame - 2, 0); ctx.lineTo(-6, 1.8); ctx.closePath(); ctx.fill();
+      this.drawCarBody(ctx, f);
+      ctx.restore();
+      this.drawWeightBadge(ctx, f.weight, x, y - alt - 8.5 * sc);
     }
 
     /** Japanese patrol car (パトカー): white body, black hood and trunk, a roof light bar flashing red then blue. Purely decorative. */
@@ -1262,6 +1307,7 @@
         }
         ctx.globalAlpha = 1;
       }
+      for (const f of g.flyers) if (!f.dead) this.drawFlyer(ctx, f, now);
       ctx.restore();
       ctx.restore();
       if (this.showPlanes) { this.planes.update(clock, v); this.planes.drawShadows(ctx, v); }
