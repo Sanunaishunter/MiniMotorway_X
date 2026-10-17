@@ -787,5 +787,57 @@ console.log('16. decorative police patrol cars stay on the roads and never touch
   check(p2.cops.length === 0, 'no patrol cars without roads');
 }
 
+// ---------------------------------------------------------------------------------------------- 起飛啦
+{
+  console.log('\n起飛啦 (flying cars)');
+  const mk = () => {
+    const g = new MM.Game({ seed: 8 });
+    for (const h of g.houses) { const d = g.dests.find((x) => x.color === h.color); if (d) connect(g, h.node, d.node); }
+    return g;
+  };
+  // cars already on the road lift off at once, and still count as delivered when they land
+  const g = mk();
+  for (let t = 0; t < 25 * 40 && g.cars.length < 2; t++) g.update(0.04);
+  const driving = g.cars.length, before = g.score;
+  check(driving >= 2, 'there are cars on the road to take off (' + driving + ')');
+  const inbound = g.dests.reduce((n, d) => n + d.inbound, 0);
+  const ids = () => new Set(g.flyers.map((f) => f.id));
+  check(g.setFlyMode(true) && g.flyMode, 'setFlyMode(true) switches the mode on');
+  check(g.cars.length === 0 && g.flyers.length === driving, 'every car on the road is now in the air');
+  check(g.dests.reduce((n, d) => n + d.inbound, 0) === inbound, 'flying cars still count as inbound to their destination');
+  check(g.holders.every((v) => v === 0) && g.reserved.every((v) => v === 0), 'taking off frees the junction locks and reservations');
+  const first = ids();
+  for (let t = 0; t < 25 * 10; t++) g.update(0.04);
+  check(![...g.flyers].some((f) => first.has(f.id)), 'the first flights have all landed');
+  check(g.score >= before + driving, 'every flying car is delivered (' + before + ' -> ' + g.score + ')');
+  check(g.dests.every((d) => d.inbound >= 0 && d.pins >= 0), 'pin / inbound counters stay sane');
+
+  // new trips fly too, even from a house with no road at all
+  const h = new MM.Game({ seed: 8 });
+  h.setFlyMode(true);
+  for (let t = 0; t < 25 * 60; t++) { if (h.state === 'upgrade') h.chooseUpgrade(0); h.update(0.04); }
+  check(h.score > 0 && h.cars.length === 0, 'with no roads at all cars still reach their destinations by air (' + h.score + ')');
+
+  // flight geometry: a straight line from the start cell to the destination cell at FLY_SPEED
+  const q = new MM.Game({ seed: 3 });
+  const house = q.houses[0], dest = q.dests.find((d) => d.color === house.color);
+  q.setFlyMode(true);
+  house.queue.push(dest); dest.pins++;
+  house.cd = 0;
+  q.update(0.05);
+  const fl = q.flyers.find((f) => f.house === house);
+  const dist = Math.hypot(q.world.col(dest.node) - q.world.col(house.node), q.world.row(dest.node) - q.world.row(house.node));
+  check(fl && Math.abs(fl.dur - Math.max(MM.CFG.FLY_MIN, dist / MM.CFG.FLY_SPEED)) < 1e-9, 'a flight lasts distance / FLY_SPEED (at least FLY_MIN)');
+
+  // toggling off: cars in the air still land, new cars drive again
+  q.setFlyMode(false);
+  check(!q.flyMode && q.flyers.length > 0, 'turning the mode off leaves airborne cars to land');
+
+  // no flying while the game is frozen on the upgrade screen
+  const u = new MM.Game({ seed: 4 });
+  u.state = 'upgrade';
+  check(!u.setFlyMode(true) && !u.flyMode, 'the mode cannot be changed on the upgrade screen');
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

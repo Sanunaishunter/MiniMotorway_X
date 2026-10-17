@@ -34,6 +34,8 @@
       this.lights = new Map(); // node -> {green, timer, pending, waiting:[bool,bool]}
       this.lanes = new Map(); // laneId -> cars (rebuilt every step)
       this.cars = [];
+      this.flyers = []; // 起飛啦: cars in the air, flying straight to their destination (outside the lane system)
+      this.flyMode = false; // while true every car flies instead of driving
       this.buildings = [];
       this.houses = [];
       this.dests = [];
@@ -533,6 +535,12 @@
     dispatch(h) {
       const w = this.world;
       if (!h.queue.length) return false;
+      if (this.flyMode) { // no road needed: the car takes off from the house at once
+        const trip = h.queue.shift();
+        trip.inbound++;
+        this.launch(w.col(h.node), w.row(h.node), trip, h);
+        return true;
+      }
       let trip = h.queue[0];
       let path = this.route(h.node, trip.node, -1);
       if (!path) {
@@ -557,6 +565,35 @@
       let l = this.lanes.get(lane);
       if (!l) this.lanes.set(lane, (l = []));
       l.push(car);
+      return true;
+    }
+
+    /** Put a flying car in the air at cell position (x, y), heading straight for `dest`. */
+    launch(x, y, dest, house) {
+      const w = this.world;
+      const x1 = w.col(dest.node), y1 = w.row(dest.node);
+      const dur = Math.max(CFG.FLY_MIN, Math.hypot(x1 - x, y1 - y) / CFG.FLY_SPEED);
+      this.flyers.push({ id: this.nextId++, color: dest.color, dest, house, x0: x, y0: y, x1, y1, t: 0, dur, dead: false });
+    }
+
+    /** A car on the road lifts off from where it is. */
+    takeoff(car) {
+      if (car.dead) return;
+      const w = this.world, a = car.path[car.i], b = car.path[car.i + 1];
+      const x = w.col(a) + (w.col(b) - w.col(a)) * car.s, y = w.row(a) + (w.row(b) - w.row(a)) * car.s;
+      this.killCar(car, false); // frees its junction lock and reservation, keeps the trip (dest.inbound stays counted)
+      this.launch(x, y, car.dest, car.house);
+    }
+
+    /** 起飛啦: from now on every car flies (cars already on the road lift off at once). Toggles when `on` is omitted. */
+    setFlyMode(on) {
+      if (!this.canEdit()) return false;
+      this.flyMode = on == null ? !this.flyMode : !!on;
+      if (this.flyMode) {
+        for (const car of this.cars) this.takeoff(car);
+        this.cars = this.cars.filter((c) => !c.dead);
+      }
+      this.events.push({ type: 'fly', on: this.flyMode });
       return true;
     }
 
@@ -810,6 +847,15 @@
         }
       }
       this.cars = this.cars.filter((c) => !c.dead);
+
+      // flying cars: straight line, no lanes, no junctions
+      if (this.flyers.length) {
+        for (const f of this.flyers) {
+          f.t += dt / f.dur;
+          if (f.t >= 1) this.deliver(f);
+        }
+        this.flyers = this.flyers.filter((f) => !f.dead);
+      }
 
       // traffic lights
       for (const [node, L] of this.lights) {
