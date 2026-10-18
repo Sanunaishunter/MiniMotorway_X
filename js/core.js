@@ -11,6 +11,9 @@
     HW_MULT: 2.1, // highway speed multiplier
     TUN_MULT: 1.5, // tunnel speed multiplier
     FLY_SPEED: 5, // 起飛啦: cells per second of a flying car (straight line to its destination)
+    FLY_SECONDS: 10, // 起飛啦: every car flies for this long (game seconds) each time it happens
+    FLY_GAP_MIN: 30, // 起飛啦 happens at random: the wait until the next one is drawn from this range (game seconds, counted from when the last one ended)
+    FLY_GAP_MAX: 90,
     FLY_MIN: 0.9, // shortest flight, in seconds (so a short hop is still visible)
     WIDE_GAP: 1.18, // following-gap multiplier on a four-lane road: 2 lanes / 1.18 = about 1.7x the flow of a two-lane road
     WIDE_HEADWAY: 0.28, // seconds between cars entering a junction that touches a four-lane road while another car is still inside
@@ -25,7 +28,7 @@
     OVERFLOW_TIME: 16, // seconds the overflow meter needs to fill
     SPORT_PERCENT: 7, // share of the cars that are sports cars (Mazda 787B / Porsche 911): one of them is worth SPORT_WEIGHT ordinary cars
     SPORT_WEIGHT: 5,
-    MEGA_SIZE: 8, // footprint (cells per side) of the mega roundabout
+    MEGA_SIZE: 3, // footprint (cells per side) of the mega roundabout
     PORTAL_EVERY: 100, // every this many delivered cars the player is given one pair of teleport portals
     PORTAL_COST: 0.25, // routing cost (about the time in seconds-ish of a quarter cell) of stepping through a portal
     MAYOR_SECONDS: 300, // 市長的命令: how long (game seconds, 5 minutes) the city is invincible once the roads have been rebuilt

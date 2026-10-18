@@ -10,7 +10,7 @@
     { id: 'hw', amount: 12, title: '高速公路', desc: '把一般道路升級成高速路段,車速加倍。' },
     { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
-    { id: 'mega', amount: 1, title: '超大圓環', desc: '8×8 格的單向四線道圓環,中央是大片綠地:大量車流可以同時繞行。放下去會清掉範圍內原本的路。' },
+    { id: 'mega', amount: 1, title: '超大圓環', desc: '3×3 格的單向四線道圓環,中央是一塊綠地:四條車道同時繞行,車流量比一般圓環大得多。放下去會清掉範圍內原本的路。' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
 
@@ -36,6 +36,10 @@
       this.cars = [];
       this.flyers = []; // 起飛啦: cars in the air, flying straight to their destination (outside the lane system)
       this.flyMode = false; // while true every car flies instead of driving
+      this.flyLeft = 0; // seconds of the current 起飛啦 still to go (0 = none running)
+      this.flyAuto = !opts.noFlights; // 起飛啦 starts by itself now and then
+      this.flyRand = MM.mulberry32((this.seed ^ 0x2545f491) | 0); // its own random stream, so the map and the demand are not disturbed
+      this.flyTimer = this.nextFlyGap();
       this.buildings = [];
       this.houses = [];
       this.dests = [];
@@ -58,7 +62,7 @@
       this.over = null;
       this.colorsUnlocked = 0;
       this.inv = { hw: 0, wide: 0, light: 0, round: 0, ovp: 0, tun: 0, big: 0, mega: 0, tp: 0, nuke: 0, hand: 0 };
-      this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (8x8, four lanes), center, nodes[] in circulation order, inner[] island nodes}
+      this.bigs = new Map(); // big roundabouts: id -> {id, kind 'big' (3x3) | 'mega' (3x3, four lanes), center, nodes[] in circulation order, inner[] island nodes}
       this.bigSeq = 0;
       this.nextId = 1;
       this.houseTimer = 14;
@@ -277,7 +281,7 @@
       return null;
     }
 
-    /** Why a mega roundabout whose 8x8 footprint has its top-left corner at `tl` cannot be built ('edge' / 'full'), or null.
+    /** Why a mega roundabout whose footprint has its top-left corner at `tl` cannot be built ('edge' / 'full'), or null.
      *  Whatever stands in the footprint is moved out of the way when it is built, so only the board edge and a lack of room to move the buildings to matter. */
     checkMega(tl) {
       const w = this.world;
@@ -368,15 +372,15 @@
       return { ok: true };
     }
 
-    /** The 8x8 mega roundabout (超大四線道圓環): a one-way ring of four-lane road, 28 nodes, round a 6x6 lawn. `tl` = top-left node. */
-    /** The top-left node of the 8x8 footprint for a click on `n` (nudged inward so it always fits on the board). */
+    /** The mega roundabout (超大四線道圓環): a one-way ring of four-lane road (4 * (MEGA_SIZE - 1) nodes) round a lawn, 3x3 nodes by default. `tl` = top-left node. */
+    /** The top-left node of the footprint for a click on `n` (centred on the click, nudged inward so it always fits on the board). */
     megaAnchor(n) {
-      const w = this.world, S = CFG.MEGA_SIZE;
-      const col = Math.max(0, Math.min(w.cols - S, w.col(n) - 3)), row = Math.max(0, Math.min(w.rows - S, w.row(n) - 3));
+      const w = this.world, S = CFG.MEGA_SIZE, h = (S - 1) >> 1;
+      const col = Math.max(0, Math.min(w.cols - S, w.col(n) - h)), row = Math.max(0, Math.min(w.rows - S, w.row(n) - h));
       return row * w.cols + col;
     }
 
-    /** Everything standing in the 8x8 footprint gets out of the way: buildings move to the nearest free spot, lights / roundabouts /
+    /** Everything standing in the footprint gets out of the way: buildings move to the nearest free spot, lights / roundabouts /
      *  overpasses, portals, tunnel ends and other big roundabouts go back to stock. (Roads inside are replaced by the ring itself.) */
     clearFootprint(tl) {
       const w = this.world, S = CFG.MEGA_SIZE, col0 = w.col(tl), row0 = w.row(tl);
@@ -868,6 +872,16 @@
       this.launch(x, y, car.dest, car.house, car.weight);
     }
 
+    /** Game seconds until the next 起飛啦, drawn at random. */
+    nextFlyGap() { return CFG.FLY_GAP_MIN + (CFG.FLY_GAP_MAX - CFG.FLY_GAP_MIN) * this.flyRand(); }
+
+    /** 起飛啦 for `seconds` (game time): every car flies, then they all come back down. */
+    startFlight(seconds) {
+      if (!this.setFlyMode(true)) return false;
+      this.flyLeft = seconds == null ? CFG.FLY_SECONDS : seconds;
+      return true;
+    }
+
     /** 起飛啦: from now on every car flies (cars already on the road lift off at once). Toggles when `on` is omitted. */
     setFlyMode(on) {
       if (!this.canEdit()) return false;
@@ -1116,6 +1130,15 @@
       if (this.houseTimer <= 0) {
         this.grow();
         this.houseTimer = Math.max(7, 15 - 0.8 * this.week) * (0.8 + 0.4 * this.rand());
+      }
+
+      // 起飛啦: at random moments every car flies for a few seconds
+      if (this.flyLeft > 0) {
+        this.flyLeft -= dt;
+        if (this.flyLeft <= 0) { this.flyLeft = 0; this.flyTimer = this.nextFlyGap(); this.setFlyMode(false); }
+      } else if (this.flyAuto && !this.flyMode) {
+        this.flyTimer -= dt;
+        if (this.flyTimer <= 0) this.startFlight();
       }
 
       // rebuild lanes

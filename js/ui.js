@@ -606,11 +606,6 @@
     else if (ui.mode === 'pause' && ui.game.canEdit()) resume();
   }
   $('btnPause').onclick = () => { sfx.unlock(); sfx.click(); togglePause(); };
-  function toggleFly() {
-    if (ui.mode !== 'play' || !ui.game.setFlyMode()) return;
-    sfx.unlock();
-  }
-  $('btnFly').onclick = toggleFly;
   $('btnSpeed').onclick = () => {
     ui.speed = ui.speed === 1 ? 2 : ui.speed === 2 ? 3 : 1;
     $('btnSpeed').textContent = ui.speed + '×';
@@ -687,7 +682,6 @@
     else if (e.key === ' ' || e.key === 'p' || e.key === 'P') { e.preventDefault(); togglePause(); }
     else if (e.key === 'n' || e.key === 'N') nextTimeMode();
     else if (e.key === 'm' || e.key === 'M') $('btnMap').click();
-    else if (e.key === 'f' || e.key === 'F') toggleFly();
     else if (e.key === '0') renderer.resetCamera();
     else if (e.key.startsWith('Arrow') && renderer.isZoomed()) {
       e.preventDefault();
@@ -719,17 +713,18 @@
   }
 
   // ---------------------------------------------------------------- HUD
-  const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '', fly: false };
+  const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '', fly: '' };
   const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'tp', 'nuke', 'hand']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {
     const z = renderer.isZoomed();
     if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; }
-    if (hud.fly !== g.flyMode) {
-      hud.fly = g.flyMode;
-      $('btnFly').classList.toggle('on', g.flyMode);
-      $('btnFly').setAttribute('aria-pressed', g.flyMode ? 'true' : 'false');
+    const fly = g.flyMode ? (g.flyLeft > 0 ? Math.ceil(g.flyLeft) + ' 秒' : '') : null; // null = not flying
+    if (hud.fly !== fly) {
+      hud.fly = fly;
+      $('flyPill').style.display = fly === null ? 'none' : '';
+      $('flyLeft').textContent = fly || '';
     }
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
@@ -763,7 +758,7 @@
       if (e.type === 'deliver') { sfx.deliver(e.color); if (e.weight > 1) sfx.sport(); }
       else if (e.type === 'spawn' && g.time > 1) sfx.spawn();
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
-      else if (e.type === 'fly') { sfx.fly(e.on); toast(e.on ? '起飛啦!所有汽車飛天直奔目的地' : '降落,汽車回到路上'); }
+      else if (e.type === 'fly') { sfx.fly(e.on); toast(e.on ? `起飛啦!${MM.CFG.FLY_SECONDS} 秒內所有汽車飛天直奔目的地` : '降落,汽車回到路上'); }
       else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');
       else if (e.type === 'teleport') sfx.teleport();
       else if (e.type === 'nukegift') toast('Kayray 又送來一顆超級原子彈(工具列「原子彈」)');

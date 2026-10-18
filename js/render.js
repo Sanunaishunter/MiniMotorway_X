@@ -840,19 +840,24 @@
       ctx.globalAlpha = 1;
     }
 
-    /** The mega roundabout's lawn (the 6x6 inside of the ring) and the flow arrows on its four lanes. */
+    /** The mega roundabout's lawn (the inside of the ring) and the flow arrows on its four lanes. The lawn is drawn for a 240-unit square and scaled to fit. */
     drawMega(ctx, big) {
       const S = MM.CFG.MEGA_SIZE;
       const x0 = this.nodeX(big.center) + 20, y0 = this.nodeY(big.center) + 20, L = (S - 1) * C - 40; // inside the ring road's kerb
-      ctx.fillStyle = '#a9d9b1'; rr(ctx, x0, y0, L, L, 26); ctx.fill();
-      ctx.fillStyle = '#8cc89d'; rr(ctx, x0 + 9, y0 + 9, L - 18, L - 18, 20); ctx.fill();
+      const k = L / 240, pond = Math.max(1, 0.45 / k); // a small lawn gets a relatively bigger pond and fewer trees
+      ctx.save();
+      ctx.translate(x0 + L / 2, y0 + L / 2);
+      ctx.scale(k, k);
+      ctx.fillStyle = '#a9d9b1'; rr(ctx, -120, -120, 240, 240, 26); ctx.fill();
+      ctx.fillStyle = '#8cc89d'; rr(ctx, -111, -111, 222, 222, 20); ctx.fill();
       ctx.fillStyle = '#6fb383';
-      const cx = x0 + L / 2, cy = y0 + L / 2;
-      for (const [tx, ty, tr] of [[-70, -52, 16], [62, -66, 12], [-40, 58, 14], [76, 40, 17], [-92, 28, 11], [20, -20, 9], [-10, 84, 10], [98, -12, 9]]) { ctx.beginPath(); ctx.arc(cx + tx, cy + ty, tr, 0, 6.2832); ctx.fill(); }
+      const trees = [[-70, -52, 16], [62, -66, 12], [-40, 58, 14], [76, 40, 17], [-92, 28, 11], [20, -20, 9], [-10, 84, 10], [98, -12, 9]];
+      for (const [tx, ty, tr] of k < 0.5 ? trees.slice(0, 4) : trees) { ctx.beginPath(); ctx.arc(tx, ty, tr, 0, 6.2832); ctx.fill(); }
       ctx.fillStyle = '#9fd3a8'; // a round pond in the middle
-      ctx.beginPath(); ctx.arc(cx, cy, 34, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#b9e1f1'; ctx.beginPath(); ctx.arc(cx, cy, 27, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(cx - 8, cy - 8, 6, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 34 * pond, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#b9e1f1'; ctx.beginPath(); ctx.arc(0, 0, 27 * pond, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(-8 * pond, -8 * pond, 6 * pond, 0, 6.2832); ctx.fill();
+      ctx.restore();
       ctx.fillStyle = 'rgba(255,255,255,0.8)'; // flow arrows on all four lanes
       const n = big.nodes.length;
       for (let i = 0; i < n; i++) {
@@ -1228,7 +1233,7 @@
           ctx.fillText('第一個門', x, y - 26);
         }
       }
-      // mega roundabout: show the 8x8 footprint under the pointer
+      // mega roundabout: show the footprint under the pointer
       if (this.tool === 'mega' && this.hover >= 0 && g.canEdit()) {
         const tl = g.megaAnchor(this.hover), bad = g.checkMega(tl);
         const x = this.nodeX(tl) - C / 2, y = this.nodeY(tl) - C / 2, S = MM.CFG.MEGA_SIZE;

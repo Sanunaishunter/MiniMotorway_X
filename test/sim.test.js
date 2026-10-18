@@ -5,6 +5,9 @@ require(path.join(__dirname, '../js/core.js'));
 require(path.join(__dirname, '../js/sim.js'));
 require(path.join(__dirname, '../js/police.js'));
 const MM = globalThis.MM;
+// 起飛啦 starts by itself at random: keep it away from the scenarios (fake cars, isolated games) except in its own tests
+const FLY_GAPS = { min: MM.CFG.FLY_GAP_MIN, max: MM.CFG.FLY_GAP_MAX };
+MM.CFG.FLY_GAP_MIN = MM.CFG.FLY_GAP_MAX = 1e9;
 
 let failures = 0;
 // a collapse is where the old game ended: now it offers the mayor's order first
@@ -1194,7 +1197,7 @@ console.log('22. a destination with no road keeps its trips and overflows (it is
   check(g.state === 'collapse', 'and it overflows and collapses the city (state ' + g.state + ')');
 }
 
-console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes side by side) round a 6x6 lawn');
+console.log('23. mega roundabout: a 3x3 one-way ring of four-lane road (4 lanes side by side) round a one-node lawn');
 {
   const mk = () => {
     let g, o = -1;
@@ -1204,12 +1207,13 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   };
   const { g, tl } = mk();
   const w = g.world;
-  check(g.placeMega(tl).reason === 'none' && g.checkMega(tl) === null, 'needs inventory; the 8x8 area is free');
+  check(g.placeMega(tl).reason === 'none' && g.checkMega(tl) === null, 'needs inventory; the 3x3 area is free');
   g.inv.mega = 2;
   check(g.placeMega(tl).ok && g.inv.mega === 1, 'the mega roundabout is placed');
   const b = [...g.bigs.values()][0];
-  check(b.kind === 'mega' && b.nodes.length === 28 && b.inner.length === 36, 'a ring of 28 nodes round 36 lawn nodes');
-  check(b.nodes.every((n, i) => { const m = b.nodes[(i + 1) % 28]; return w.adjacent(n, m) && w.edgeBetween(n, m) && !w.edgeBetween(m, n) && w.isWideBetween(n, m); }), 'every ring edge is four-lane and one-way (counter-clockwise)');
+  const N = b.nodes.length;
+  check(b.kind === 'mega' && N === 8 && b.inner.length === 1, 'a ring of 8 nodes round 1 lawn node');
+  check(b.nodes.every((n, i) => { const m = b.nodes[(i + 1) % N]; return w.adjacent(n, m) && w.edgeBetween(n, m) && !w.edgeBetween(m, n) && w.isWideBetween(n, m); }), 'every ring edge is four-lane and one-way (counter-clockwise)');
   check(b.nodes.every((n) => w.ringId[n] === b.id) && b.inner.every((n) => w.island[n] === b.id), 'ring and lawn are marked');
   check(g.slotsOf(b.nodes[0] * 4 + w.dirOf(b.nodes[0], b.nodes[1])) === 4, 'the ring has four lanes in its one direction');
   const lawn = b.inner[0];
@@ -1217,7 +1221,10 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   check(!g.removeEdge(b.nodes[0], b.nodes[1]).ok, 'a ring segment cannot be torn out alone');
   g.inv.mega = 1;
   check(g.checkMega(tl) === null, 'a second one may overlap the first (the first is taken apart)');
-  check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - 8) * w.cols + (w.cols - 8), 'the footprint is nudged inward at the board edge');
+  const S0 = MM.CFG.MEGA_SIZE;
+  check(g.megaAnchor(0) === 0 && g.megaAnchor(w.n - 1) === (w.rows - S0) * w.cols + (w.cols - S0), 'the footprint is nudged inward at the board edge');
+  const mid = 10 * w.cols + 12;
+  check(g.megaAnchor(mid) === 9 * w.cols + 11, 'the footprint is centred on the click');
 
   // traffic: cars all round the ring at once use the four lanes and never jam
   let err = null, done = 0, maxSlot = 0, spawned = 0;
@@ -1227,9 +1234,9 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   MM.CFG.TOW_HOLDER = MM.CFG.TOW_ANY = 1e9;
   for (let t = 0; t < 25 * 90; t++) {
     for (let k = 0; k < 2; k++) {
-      const st = Math.floor(rnd() * 28), len = 6 + Math.floor(rnd() * 20);
+      const st = Math.floor(rnd() * N), len = 6 + Math.floor(rnd() * 20);
       const path = [];
-      for (let j = 0; j <= len; j++) path.push(b.nodes[(st + j) % 28]);
+      for (let j = 0; j <= len; j++) path.push(b.nodes[(st + j) % N]);
       const car = fakeCar(g, path);
       g.cars.pop();
       if (g.laneClear(car.lane, MM.CFG.GAP * 1.4, car.slot)) { g.cars.push(car); spawned++; }
@@ -1243,24 +1250,24 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
   check(maxSlot === 3 && done > spawned * 0.5, 'cars use all four lanes (outermost slot ' + maxSlot + ') and flow (' + done + ' of ' + spawned + ' arrived)');
 
   // removing it clears the ring and the lawn and refunds the piece
-  check(g.removeBigAt(b.inner[0]) && g.inv.mega === 2 && !g.bigs.size && b.nodes.every((n) => !w.ringId[n] && !w.edgeBetween(n, b.nodes[(b.nodes.indexOf(n) + 1) % 28])) && b.inner.every((n) => !w.island[n]), 'erasing the lawn removes it and refunds the mega roundabout');
+  check(g.removeBigAt(b.inner[0]) && g.inv.mega === 2 && !g.bigs.size && b.nodes.every((n) => !w.ringId[n] && !w.edgeBetween(n, b.nodes[(b.nodes.indexOf(n) + 1) % N])) && b.inner.every((n) => !w.island[n]), 'erasing the lawn removes it and refunds the mega roundabout');
 
   // roads running through the footprint are cleared and refunded when it is laid
   const m2 = mk();
   m2.g.inv.mega = 1; m2.g.inv.wide = 0;
-  const w2 = m2.g.world, c0 = m2.tl + 3 * w2.cols + 1;
-  m2.g.addEdge(c0 - 1, c0, 1); m2.g.addEdge(c0, c0 + 1, 1); m2.g.addEdge(c0 + 1, c0 + 2, 1);
+  const w2 = m2.g.world, c0 = m2.tl + w2.cols + 1; // the middle of the footprint
+  m2.g.addEdge(c0 - 1, c0, 1); m2.g.addEdge(c0, c0 + 1, 1);
   // everything in the footprint moves out of the way: buildings, lights, a portal pair, a tunnel, another big roundabout
   {
     const m3 = mk();
     const g3 = m3.g, w3 = g3.world, o = m3.tl, W = w3.cols;
     g3.inv.mega = 2; g3.inv.light = 3; g3.inv.tun = 2; g3.inv.tp = 0; g3.inv.big = 1; g3.inv.hand = 0;
-    const house = g3.addBuilding('house', 0, o + 2 * W + 2), dest = g3.addBuilding('dest', 0, o + 5 * W + 5);
+    const house = g3.addBuilding('house', 0, o), dest = g3.addBuilding('dest', 0, o + 2 * W + 2); // two opposite corners of the footprint
     const road = (a, b) => g3.addEdge(a, b, 1);
-    for (let k = 0; k < 6; k++) road(o + 3 * W + k, o + 3 * W + k + 1); // a road along row 3
-    for (let k = 1; k < 4; k++) road(o + k * W + 4, o + (k + 1) * W + 4); // a crossing road
-    g3.placeFeature(o + 3 * W + 4, 'light');
-    g3.addTunnel(o + 6 * W, o + 6 * W + 3);
+    for (let k = 0; k < 2; k++) road(o + W + k, o + W + k + 1); // a road along the middle row
+    for (let k = 0; k < 2; k++) road(o + k * W + 1, o + (k + 1) * W + 1); // a crossing road
+    g3.placeFeature(o + W + 1, 'light');
+    g3.addTunnel(o + 2 * W, o + 2 * W + 3); // one end inside the footprint, one outside
     const before = { light: g3.inv.light, tun: g3.inv.tun };
     const nb = g3.buildings.length;
     const r3 = g3.placeMega(o);
@@ -1275,7 +1282,7 @@ console.log('23. mega roundabout: an 8x8 one-way ring of four-lane road (4 lanes
     check(!err3, 'bookkeeping is consistent (' + err3 + ')');
   }
 
-  check(m2.g.placeMega(m2.tl).ok && !w2.rawBetween(c0 - 1, c0) && !w2.rawBetween(c0, c0 + 1) && !w2.rawBetween(c0 + 1, c0 + 2), 'roads inside the footprint are cleared when the ring is laid');
+  check(m2.g.placeMega(m2.tl).ok && !w2.rawBetween(c0 - 1, c0) && !w2.rawBetween(c0, c0 + 1), 'roads inside the footprint are cleared when the ring is laid');
 }
 
 console.log('24. 天神之手 (Hand of God): lift a house or destination and put it down somewhere else');
@@ -1394,6 +1401,35 @@ console.log('24. 天神之手 (Hand of God): lift a house or destination and put
       sp.setFlyMode(true);
       check(sp.flyers.length > 0 && sp.flyers.some((f) => f.weight === wgt), 'a sports car keeps its weight (x' + wgt + ') when it takes off (id ' + id + ')');
     } else console.log('  (no sports car showed up in this run; weight test skipped)');
+  }
+
+  // it starts by itself at a random moment, lasts FLY_SECONDS, then the next one is drawn at random
+  {
+    const C = MM.CFG;
+    C.FLY_GAP_MIN = FLY_GAPS.min; C.FLY_GAP_MAX = FLY_GAPS.max;
+    const a = new MM.Game({ seed: 8 }), b = new MM.Game({ seed: 8 }), c = new MM.Game({ seed: 9 }), d = new MM.Game({ seed: 8, noFlights: true });
+    check(a.flyTimer >= C.FLY_GAP_MIN && a.flyTimer <= C.FLY_GAP_MAX && !a.flyMode, 'the first 起飛啦 is ' + a.flyTimer.toFixed(1) + ' s away (between ' + C.FLY_GAP_MIN + ' and ' + C.FLY_GAP_MAX + ')');
+    check(a.flyTimer === b.flyTimer && a.flyTimer !== c.flyTimer, 'random, but the same for the same seed');
+    check(a.houses.map((h) => h.node).join() === d.houses.map((h) => h.node).join() && a.dests.map((x) => x.node).join() === d.dests.map((x) => x.node).join(), 'it uses its own random stream: the map is the same with and without it');
+    let t0 = -1, t1 = -1;
+    a.flyTimer = 0.5;
+    for (let t = 0; t < 25 * 30 && t1 < 0; t++) {
+      a.update(0.04);
+      if (a.flyMode && t0 < 0) t0 = a.time;
+      if (t0 >= 0 && !a.flyMode) t1 = a.time;
+      a.events.length = 0;
+    }
+    check(t0 > 0 && t0 < 1, 'it starts by itself when the timer runs out (at ' + t0.toFixed(2) + ' s)');
+    check(t1 > 0 && Math.abs(t1 - t0 - C.FLY_SECONDS) < 0.1, 'and lasts ' + C.FLY_SECONDS + ' seconds (' + (t1 - t0).toFixed(2) + ')');
+    check(a.flyTimer >= C.FLY_GAP_MIN && a.flyTimer <= C.FLY_GAP_MAX && a.flyLeft === 0, 'afterwards the next one is drawn at random');
+    d.flyTimer = 0.5;
+    for (let t = 0; t < 25 * 5; t++) d.update(0.04);
+    check(!d.flyMode, 'noFlights switches the random flights off');
+    // game time only: nothing runs while the game is frozen
+    const f = new MM.Game({ seed: 8 });
+    f.flyTimer = 0.5; f.state = 'mayor'; f.update(5);
+    check(!f.flyMode && f.flyTimer === 0.5, 'the timer is frozen with the game');
+    C.FLY_GAP_MIN = C.FLY_GAP_MAX = 1e9;
   }
 
   // no flying while the game is frozen on the upgrade screen

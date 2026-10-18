@@ -29,10 +29,10 @@
         <button class="icon-btn" id="btnFit" title="回到完整地圖 (0)" aria-label="回到完整地圖" style="display:none">
           <svg viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/><circle cx="12" cy="12" r="2.2" class="fill"/></svg>
         </button>
-        <button class="icon-btn fly-btn" id="btnFly" title="起飛啦 (F):所有汽車飛天,直線飛往目的地" aria-label="起飛啦" aria-pressed="false">
+        <div class="fly-pill" id="flyPill" style="display:none" role="status">
           <svg viewBox="0 0 24 24"><path d="M21 3L3 10.5l6.5 2.5L12 20z" class="fill"/><path d="M9.5 13L21 3"/></svg>
-          <span>起飛啦</span>
-        </button>
+          <span>起飛啦</span><b id="flyLeft"></b>
+        </div>
         <button class="icon-btn" id="btnPause" title="暫停 (空白鍵)" aria-label="暫停">
           <svg viewBox="0 0 24 24"><path id="pauseIcon" d="M8 5v14M16 5v14"/></svg>
         </button>
@@ -93,7 +93,7 @@
         <svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0" stroke="none"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643" stroke="none"/></svg>
         <span>隧道</span><em class="badge" id="cntTun">0</em>
       </button>
-      <button class="tool locked" data-tool="mega" title="超大圓環:8×8 格的單向四線道圓環,點一下放在想要的位置(清掉範圍內原本的路)">
+      <button class="tool locked" data-tool="mega" title="超大圓環:3×3 格的單向四線道圓環,點一下放在想要的位置(清掉範圍內原本的路)">
         <svg viewBox="0 0 32 32"><rect x="3.5" y="3.5" width="25" height="25" rx="9" fill="none" stroke="#8e9bb0" stroke-width="6.5"/><rect x="10" y="10" width="12" height="12" rx="4" fill="#9fd3a8" stroke="none"/></svg>
         <span>超大圓環</span><em class="badge" id="cntMega">0</em>
       </button>

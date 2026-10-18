@@ -68,9 +68,19 @@ html, body {
 .icon-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .icon-btn svg .fill { fill: currentColor; stroke: none; }
 .icon-btn.off { color: #8f98a6; }
-.icon-btn.fly-btn { width: auto; padding: 0 12px 0 9px; grid-auto-flow: column; gap: 5px; }
-.icon-btn.fly-btn span { font-size: 13px; }
-.icon-btn.fly-btn.on { background: linear-gradient(135deg, #ff9a3d, #ff5f6d); color: #fff; box-shadow: 0 0 0 2px rgba(255, 138, 61, 0.35); }
+/* 起飛啦 status: shown only while the cars are flying (it is triggered at random, not by a button) */
+.fly-pill {
+  height: 38px; padding: 0 12px 0 9px; border-radius: 12px;
+  display: flex; align-items: center; gap: 5px;
+  background: linear-gradient(135deg, #ff9a3d, #ff5f6d); color: #fff;
+  font: 800 13px system-ui, sans-serif;
+  box-shadow: 0 0 0 2px rgba(255, 138, 61, 0.35);
+  animation: flyPulse 0.9s ease-in-out infinite alternate;
+}
+.fly-pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.fly-pill svg .fill { fill: currentColor; stroke: none; }
+.fly-pill b { min-width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; }
+@keyframes flyPulse { to { box-shadow: 0 0 0 5px rgba(255, 138, 61, 0.12); } }
 
 /* ---------- toolbar (bottom bar) ---------- */
 #toolbar {
@@ -249,6 +259,7 @@ html, body {
   .week-pill { flex: 1 1 110px; }
   .hud-btns { gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
   .icon-btn { width: 36px; height: 36px; border-radius: 11px; }
+  .fly-pill { height: 36px; border-radius: 11px; }
   .tool { flex: 1 1 0; width: auto; min-width: 34px; max-width: 54px; height: 50px; font-size: 9px; }
   .tool svg { width: 22px; height: 22px; }
   #toolbar { gap: 3px; justify-content: center; padding-left: 6px; padding-right: 6px; }
@@ -271,6 +282,7 @@ html, body {
   .week-bar { height: 5px; }
   .hud-btns { gap: 5px; }
   .icon-btn { width: 34px; height: 34px; border-radius: 10px; }
+  .fly-pill { height: 34px; border-radius: 10px; }
   .icon-btn svg { width: 18px; height: 18px; }
 
   #toolbar { gap: 5px; padding-top: 4px; padding-bottom: calc(4px + var(--safe-b)); }
