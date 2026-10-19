@@ -1493,5 +1493,85 @@ console.log('24. 天神之手 (Hand of God): lift a house or destination and put
   check(!u.setFlyMode(true) && !u.flyMode, 'the mode cannot be changed on the upgrade screen');
 }
 
+console.log('25. 摩西分海: houses to the left, destinations to the right, the same colours together');
+{
+  const mk = (seed) => {
+    const g = new MM.Game({ seed, cols: 38, rows: 20 });
+    g.colorsUnlocked = 4;
+    for (let c = 0; c < 4; c++) {
+      for (let k = 0; k < 2; k++) if (g.dests.filter((d) => d.color === c).length < 1 + (c % 2)) g.spawnRandom('dest', c);
+      for (let k = 0; k < 12 && g.houses.filter((h) => h.color === c).length < 5; k++) g.spawnRandom('house', c);
+    }
+    return g;
+  };
+  const g = mk(5);
+  const w = g.world, mid = (w.cols - 1) / 2;
+  const nb = g.buildings.length;
+  check(g.inv.sea === 0 && g.checkSea() === 'none' && !g.partSea().ok, 'needs inventory');
+  g.inv.sea = 2;
+  check(g.checkSea() === null, 'there is room on both sides (' + g.houses.length + ' houses, ' + g.dests.length + ' destinations)');
+  const r = g.partSea();
+  check(r.ok && g.inv.sea === 1 && g.buildings.length === nb, 'parted: nothing lost (' + r.moved + ' buildings moved)');
+  check(g.houses.every((h) => w.col(h.node) < mid) && g.dests.every((d) => w.col(d.node) > mid), 'all houses are on the left, all destinations on the right');
+  check(g.buildings.every((b) => w.bld[b.node] === b && !w.water[b.node]) && w.bld.filter(Boolean).length === nb, 'the world map agrees, nothing on the water');
+  check(g.buildings.every((a, i) => g.buildings.every((b, j) => i === j || Math.abs(w.col(a.node) - w.col(b.node)) + Math.abs(w.row(a.node) - w.row(b.node)) >= 2)), 'no two buildings touch');
+  // each colour sits in a band of rows, and its houses face its destinations
+  let worst = 0;
+  for (let c = 0; c < 4; c++) {
+    const rows = [...g.houses, ...g.dests].filter((b) => b.color === c).map((b) => w.row(b.node));
+    worst = Math.max(worst, Math.max(...rows) - Math.min(...rows));
+  }
+  check(worst <= 11, 'every colour stays together (its buildings span at most ' + worst + ' rows of ' + w.rows + ')');
+  const centre = (c, list) => { const r2 = list.filter((b) => b.color === c).map((b) => w.row(b.node)); return r2.reduce((a, b) => a + b, 0) / r2.length; };
+  check([0, 1, 2, 3].every((c) => Math.abs(centre(c, g.houses) - centre(c, g.dests)) <= 3.5), 'and its houses face its destinations');
+  check(g.events.filter((e) => e.type === 'move').length >= 1 && g.events.some((e) => e.type === 'sea'), 'move / sea events are sent');
+  const err = sanity(g);
+  check(!err, 'bookkeeping is consistent (' + err + ')');
+
+  // buildings that appear later follow the same rule
+  const before = g.houses.length;
+  const h2 = g.spawnRandom('house', 2), d2 = g.spawnRandom('dest', 2);
+  check(h2 && d2 && g.houses.length === before + 1 && w.col(h2.node) < mid && w.col(d2.node) > mid, 'a new house goes left, a new destination goes right');
+  check(Math.abs(w.row(h2.node) - g.sea.band[2]) <= 5 && Math.abs(w.row(d2.node) - g.sea.band[2]) <= 5, 'both in their colour\'s band (row ' + w.row(h2.node) + ' / ' + w.row(d2.node) + ', band ' + g.sea.band[2].toFixed(1) + ')');
+  g.colorsUnlocked = 5;
+  const h4 = g.spawnRandom('house', 4);
+  const taken = Object.entries(g.sea.band).filter(([c]) => +c !== 4).map(([, y]) => y);
+  check(h4 && taken.every((y) => Math.abs(y - g.sea.band[4]) >= 2), 'a new colour gets a band of its own (row ' + g.sea.band[4] + ')');
+  for (let t = 0; t < 25 * 20; t++) { g.update(0.04); if (g.state === 'upgrade') g.chooseUpgrade(0); g.events.length = 0; }
+  const err2 = sanity(g);
+  check(!err2, 'the game carries on (' + err2 + ')');
+
+  // it may be used again, and a second time changes nothing that is already in place
+  g.inv.sea = 1; g.partSea();
+  check(g.buildings.every((b) => w.bld[b.node] === b), 'a second use leaves a consistent map');
+
+  // cars heading for a destination that moves are recalled, the roads stay where they are
+  {
+    const m = mk(5);
+    m.inv.sea = 1;
+    for (const h of m.houses) { const d = m.dests.find((x) => x.color === h.color); if (d) connect(m, h.node, d.node); }
+    for (let t = 0; t < 25 * 40 && m.cars.length < 2; t++) { m.update(0.04); if (m.state === 'upgrade') m.chooseUpgrade(0); }
+    const edges = () => { let n = 0; for (let i = 0; i < m.world.n; i++) { if (m.world.eE[i]) n++; if (m.world.eS[i]) n++; } return n; };
+    const e0 = edges(), driving = m.cars.length;
+    check(driving >= 1, 'there are cars on the road (' + driving + ')');
+    m.partSea();
+    check(m.cars.every((c) => c.dead || c.dest.node === c.path[c.path.length - 1]) && edges() === e0, 'cars for a destination that moved are recalled, the roads stay');
+    let err3 = null;
+    for (let t = 0; t < 25 * 30 && !err3; t++) { m.update(0.04); if (m.state === 'upgrade') m.chooseUpgrade(0); err3 = sanity(m); m.events.length = 0; }
+    check(!err3 && m.dests.every((d) => d.inbound >= 0 && d.pins >= 0), 'and the game goes on with consistent counters (' + err3 + ')');
+  }
+
+  // no room: one side cannot hold everything
+  {
+    const t = new MM.Game({ seed: 3, cols: 14, rows: 8 });
+    t.inv.sea = 1;
+    for (let i = 0; i < 40; i++) t.houses.push({ kind: 'house', color: 0, node: -1, queue: [] });
+    check(t.checkSea() === 'full' && !t.partSea().ok && t.inv.sea === 1, 'not enough room on a side: refused, and the piece is kept');
+  }
+  const f = new MM.Game({ seed: 3 });
+  f.inv.sea = 1; f.state = 'upgrade';
+  check(f.checkSea() === 'state', 'not while the upgrade screen is up');
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

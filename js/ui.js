@@ -86,6 +86,7 @@
       },
       sport() { [659, 880, 1175].forEach((f, i) => tone(f, 0.18, 'square', 0.025, i * 0.06)); },
       gift() { [784, 988, 1319].forEach((f, i) => tone(f, 0.22, 'sine', 0.05, i * 0.08)); },
+      sea() { tone(110, 1.3, 'sawtooth', 0.04, 0, 55); tone(330, 0.9, 'triangle', 0.03, 0.1, 660); tone(495, 0.7, 'triangle', 0.03, 0.5, 990); },
       nuke() {
         tone(140, 1.4, 'sawtooth', 0.07, 0, 28);
         tone(90, 1.8, 'square', 0.05, 0.05, 24);
@@ -162,6 +163,7 @@
     ovp: '<svg viewBox="0 0 32 32" fill="none" stroke-linecap="round"><path d="M3 21H29" stroke="#8e9bb0" stroke-width="6"/><path d="M16 2V30" stroke="#56637a" stroke-width="10"/><path d="M16 2V30" stroke="#b4bfd1" stroke-width="6.5"/><path d="M16 5V27" stroke="#fff" stroke-width="1.3" stroke-dasharray="2.5 3"/></svg>',
     tun: '<svg viewBox="0 0 32 32"><path d="M4 28V16a12 12 0 0 1 24 0v12z" fill="#8e9bb0"/><path d="M11 28v-8a5 5 0 0 1 10 0v8z" fill="#2f3643"/></svg>',
     mega: '<svg viewBox="0 0 32 32" fill="none"><rect x="3" y="3" width="26" height="26" rx="10" stroke="#8e9bb0" stroke-width="7.5"/><rect x="3" y="3" width="26" height="26" rx="10" stroke="#fff" stroke-width="1.2" stroke-dasharray="2.5 3"/><rect x="10" y="10" width="12" height="12" rx="4" fill="#9fd3a8"/></svg>',
+    sea: '<svg viewBox="0 0 32 32"><path d="M3 5c5 3 7 6 7 11s-2 8-7 11z" fill="#6cb8f0" stroke="#2f7cb8" stroke-width="1.4"/><path d="M29 5c-5 3-7 6-7 11s2 8 7 11z" fill="#6cb8f0" stroke="#2f7cb8" stroke-width="1.4"/><path d="M16 4v24" stroke="#d9c58c" stroke-width="6" stroke-dasharray="3 3" fill="none"/></svg>',
     big: '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="22" height="22" rx="9" stroke="#8e9bb0" stroke-width="6"/><circle cx="16" cy="16" r="4.5" fill="#9fd3a8"/></svg>',
   };
 
@@ -337,6 +339,7 @@
     b.addEventListener('click', () => {
       sfx.unlock();
       if (b.dataset.tool === 'nuke') { detonate(); return; } // an action, not a tool
+      if (b.dataset.tool === 'sea') { partSea(); return; } // ... and so is this
       sfx.click();
       setTool(b.dataset.tool);
     });
@@ -353,6 +356,22 @@
       sfx.nuke();
       setTpFirst(-1);
       toast('轟!道路全部被抹除了,重新規劃吧');
+    }
+  }
+  /** 摩西分海: houses to the left, destinations to the right, colours together (asks first: the buildings move and the old roads no longer fit). */
+  function partSea() {
+    const g = ui.game;
+    if (ui.mode !== 'play' || !g.canEdit()) return;
+    const bad = g.checkSea();
+    if (bad === 'none') { deny('沒有摩西分海了:每週升級選單有機會拿到'); return; }
+    if (bad === 'full') { deny('放不下:左右兩邊的空地不夠排所有房子(水面、道路或太擠)'); return; }
+    if (bad) return;
+    if (!window.confirm('摩西分海?所有房子會搬到左邊、所有目的地搬到右邊,同顏色排在一起,之後新長出來的也是。道路不會跟著搬,要重新接;正開往搬走目的地的車會被召回。')) return;
+    const r = g.partSea();
+    if (r.ok) {
+      sfx.sea();
+      setTpFirst(-1); setHandFirst(-1);
+      toast('摩西分海!房子在左、目的地在右,中間是大路');
     }
   }
   const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'mega', 'tp', 'hand'];
@@ -715,7 +734,7 @@
 
   // ---------------------------------------------------------------- HUD
   const hud = { score: -1, week: -1, day: -1, fill: -1, inv: '', fly: '' };
-  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'tp', 'nuke', 'hand']; // (the big roundabout still exists in the engine but is not offered)
+  const OPTIONAL_TOOLS = ['hw', 'wide', 'light', 'round', 'ovp', 'tun', 'mega', 'sea', 'tp', 'nuke', 'hand']; // (the big roundabout still exists in the engine but is not offered)
   const unlockedTools = new Set();
   let fitShown = false;
   function updateHud(g) {

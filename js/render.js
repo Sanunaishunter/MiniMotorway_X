@@ -1362,6 +1362,19 @@
           ctx.font = 'bold 15px system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('+' + (f.n || 1), x, y - 22 - k * 20);
+        } else if (f.kind === 'sea') { // two walls of water roll away from the middle line to both edges
+          const W = g.cols * C, H = g.rows * C, off = (0.15 + 0.85 * k) * W / 2;
+          ctx.fillStyle = '#6cb8f0';
+          for (const side of [-1, 1]) {
+            const x = W / 2 + side * off;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            for (let y = 0; y <= H; y += 12) ctx.lineTo(x + Math.sin(y / 14 + k * 9) * 7, y);
+            ctx.lineTo(x - side * 34, H);
+            ctx.lineTo(x - side * 34, 0);
+            ctx.closePath();
+            ctx.fill();
+          }
         } else if (f.kind === 'puff') {
           ctx.fillStyle = 'rgba(80,90,100,0.6)';
           ctx.beginPath();
@@ -1407,6 +1420,8 @@
         } else if (e.type === 'move') {
           this.fx.push({ kind: 'ring', node: e.from, color: '#ffd24d', t0: g.time, dur: 0.6, r: 34 });
           this.fx.push({ kind: 'ring', node: e.node, color: MM.COLORS[e.color].main, t0: g.time, dur: 0.9, r: 46 });
+        } else if (e.type === 'sea') {
+          this.fx.push({ kind: 'sea', t0: g.time, dur: 1.5 });
         } else if (e.type === 'nuke') {
           this.nukeAt = performance.now();
         } else if (e.type === 'kayray') {

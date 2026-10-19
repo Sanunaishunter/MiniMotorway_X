@@ -117,6 +117,7 @@ html, body {
 .tool.empty { opacity: 0.4; }
 .tool.locked { display: none; }
 .tool.nuke { background: rgba(255, 210, 63, 0.35); }
+.tool.sea { background: rgba(108, 184, 240, 0.3); }
 .tool svg { width: 28px; height: 28px; fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .tool svg .stroke-thick { stroke-width: 6; }
 .tool svg .stroke-thick.g { stroke: #8e9bb0; }
