@@ -92,6 +92,7 @@
         tone(1800, 0.25, 'triangle', 0.04, 0, 200);
       },
       kayray() { [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.42, 'triangle', 0.05, i * 0.11)); },
+      fuji(on) { if (on) { tone(1250, 0.4, 'sawtooth', 0.02, 0, 650); tone(160, 0.6, 'square', 0.02, 0.05, 420); tone(1100, 0.3, 'sawtooth', 0.015, 0.45, 600); } else tone(500, 0.4, 'triangle', 0.03, 0, 200); },
       fly(on) { if (on) { tone(260, 0.55, 'sawtooth', 0.03, 0, 1100); tone(520, 0.5, 'triangle', 0.035, 0.12, 1400); } else tone(900, 0.4, 'triangle', 0.035, 0, 300); },
     };
   })();
@@ -720,11 +721,16 @@
   function updateHud(g) {
     const z = renderer.isZoomed();
     if (z !== fitShown) { fitShown = z; $('btnFit').style.display = z ? '' : 'none'; }
-    const fly = g.flyMode ? (g.flyLeft > 0 ? Math.ceil(g.flyLeft) + ' 秒' : '') : null; // null = not flying
-    if (hud.fly !== fly) {
-      hud.fly = fly;
-      $('flyPill').style.display = fly === null ? 'none' : '';
-      $('flyLeft').textContent = fly || '';
+    const mode = g.flyMode ? 'fly' : g.fujiMode ? 'fuji' : ''; // the random mode that is running, if any
+    const modeSig = mode + (mode && g.modeLeft > 0 ? Math.ceil(g.modeLeft) : '');
+    if (hud.fly !== modeSig) {
+      hud.fly = modeSig;
+      $('modePill').style.display = mode ? '' : 'none';
+      $('modePill').classList.toggle('fuji', mode === 'fuji');
+      $('icoFly').style.display = mode === 'fuji' ? 'none' : '';
+      $('icoFuji').style.display = mode === 'fuji' ? '' : 'none';
+      $('modeName').textContent = mode === 'fuji' ? '藤原模式' : '起飛啦';
+      $('modeLeft').textContent = mode && g.modeLeft > 0 ? Math.ceil(g.modeLeft) + ' 秒' : '';
     }
     if (hud.score !== g.score) { hud.score = g.score; $('score').textContent = g.score; }
     const best = Math.max(ui.best, g.score);
@@ -758,6 +764,11 @@
       if (e.type === 'deliver') { sfx.deliver(e.color); if (e.weight > 1) sfx.sport(); }
       else if (e.type === 'spawn' && g.time > 1) sfx.spawn();
       else if (e.type === 'week') { /* modal handled below */ ui.pendingWeek = e; }
+      else if (e.type === 'fuji') {
+        sfx.fuji(e.on);
+        const sec = MM.CFG.FUJI_SECONDS;
+        toast(e.on ? `藤原模式!${sec % 60 ? sec + ' 秒' : sec / 60 + ' 分鐘'}內所有車輛加速,輪胎冒白煙` : '藤原模式結束,車速恢復正常');
+      }
       else if (e.type === 'fly') { sfx.fly(e.on); toast(e.on ? `起飛啦!${MM.CFG.FLY_SECONDS} 秒內所有汽車飛天直奔目的地` : '降落,汽車回到路上'); }
       else if (e.type === 'mayorend') toast('無敵時間結束,路網撐住了!');
       else if (e.type === 'teleport') sfx.teleport();
@@ -778,7 +789,7 @@
     if (g) {
       if (ui.mode === 'play' && g.state === 'running') {
         g.update(dt * ui.speed);
-        renderer.police.update(dt * ui.speed);
+        renderer.police.update(dt * ui.speed * g.boost()); // the patrol cars join in 藤原模式
       }
       handleEvents(g);
       if (ui.mode === 'play' && g.state === 'upgrade') showUpgrade(g, ui.pendingWeek);

@@ -36,10 +36,11 @@
       this.cars = [];
       this.flyers = []; // 起飛啦: cars in the air, flying straight to their destination (outside the lane system)
       this.flyMode = false; // while true every car flies instead of driving
-      this.flyLeft = 0; // seconds of the current 起飛啦 still to go (0 = none running)
-      this.flyAuto = !opts.noFlights; // 起飛啦 starts by itself now and then
-      this.flyRand = MM.mulberry32((this.seed ^ 0x2545f491) | 0); // its own random stream, so the map and the demand are not disturbed
-      this.flyTimer = this.nextFlyGap();
+      this.fujiMode = false; // 藤原模式: every car is faster (and burns rubber, see the renderer)
+      this.modeLeft = 0; // game seconds of the current random mode (起飛啦 / 藤原模式) still to go (0 = none running)
+      this.modesAuto = !opts.noModes; // the random modes start by themselves now and then
+      this.modeRand = MM.mulberry32((this.seed ^ 0x2545f491) | 0); // its own random stream, so the map and the demand are not disturbed
+      this.modeTimer = this.nextModeGap();
       this.buildings = [];
       this.houses = [];
       this.dests = [];
@@ -757,8 +758,11 @@
     /** Speed along a lane in lane-lengths per second. */
     speedOf(lane) {
       const t = this.world.edge(lane >> 2, lane & 3);
-      return (CFG.SPEED * (t === 2 ? CFG.HW_MULT : t === 3 ? CFG.TUN_MULT : 1)) / this.lenOf(lane);
+      return (CFG.SPEED * this.boost() * (t === 2 ? CFG.HW_MULT : t === 3 ? CFG.TUN_MULT : 1)) / this.lenOf(lane);
     }
+
+    /** Speed multiplier of every car: CFG.FUJI_MULT during 藤原模式, else 1. */
+    boost() { return this.fujiMode ? CFG.FUJI_MULT : 1; }
 
     /** Number of lane slots (cars side by side) on a lane: 4 on a one-way four-lane road, 2 on a two-way one, else 1. */
     slotsOf(lane) {
@@ -872,19 +876,49 @@
       this.launch(x, y, car.dest, car.house, car.weight);
     }
 
-    /** Game seconds until the next 起飛啦, drawn at random. */
-    nextFlyGap() { return CFG.FLY_GAP_MIN + (CFG.FLY_GAP_MAX - CFG.FLY_GAP_MIN) * this.flyRand(); }
+    /** Game seconds until the next random mode, drawn at random. */
+    nextModeGap() { return CFG.MODE_GAP_MIN + (CFG.MODE_GAP_MAX - CFG.MODE_GAP_MIN) * this.modeRand(); }
 
     /** 起飛啦 for `seconds` (game time): every car flies, then they all come back down. */
     startFlight(seconds) {
       if (!this.setFlyMode(true)) return false;
-      this.flyLeft = seconds == null ? CFG.FLY_SECONDS : seconds;
+      this.modeLeft = seconds == null ? CFG.FLY_SECONDS : seconds;
       return true;
+    }
+
+    /** 藤原模式 for `seconds` (game time): every car is CFG.FUJI_MULT times as fast. */
+    startFujiwara(seconds) {
+      if (!this.setFujiMode(true)) return false;
+      this.modeLeft = seconds == null ? CFG.FUJI_SECONDS : seconds;
+      return true;
+    }
+
+    /** 藤原模式 on / off (toggles when `on` is omitted). The modes exclude each other: starting one ends the other. */
+    setFujiMode(on) {
+      if (!this.canEdit()) return false;
+      const next = on == null ? !this.fujiMode : !!on;
+      if (next === this.fujiMode) return true;
+      if (next && this.flyMode) this.setFlyMode(false);
+      this.fujiMode = next;
+      this.events.push({ type: 'fuji', on: next });
+      return true;
+    }
+
+    /** One of the random modes, picked at random. */
+    startRandomMode() { return this.modeRand() < 0.5 ? this.startFlight() : this.startFujiwara(); }
+
+    /** The running random mode is over (its time ran out): everything is back to normal and the next one is drawn. */
+    endMode() {
+      this.modeLeft = 0;
+      this.modeTimer = this.nextModeGap();
+      this.setFlyMode(false);
+      this.setFujiMode(false);
     }
 
     /** 起飛啦: from now on every car flies (cars already on the road lift off at once). Toggles when `on` is omitted. */
     setFlyMode(on) {
       if (!this.canEdit()) return false;
+      if ((on == null ? !this.flyMode : !!on) && this.fujiMode) this.setFujiMode(false);
       this.flyMode = on == null ? !this.flyMode : !!on;
       if (this.flyMode) {
         for (const car of this.cars) this.takeoff(car);
@@ -1030,7 +1064,7 @@
         }
       }
       // gentle acceleration; running into the car ahead or a stop line kills the speed
-      car.v = Math.min(this.speedOf(car.lane), (car.v || 0) + (CFG.ACCEL / len) * dt);
+      car.v = Math.min(this.speedOf(car.lane), (car.v || 0) + (CFG.ACCEL * this.boost() / len) * dt);
       const ds = Math.min(car.v * dt, maxS - car.s);
       if (ds < car.v * dt - 1e-9) car.v = Math.max(0, ds / dt);
       if (ds > 0) car.s += ds;
@@ -1132,13 +1166,13 @@
         this.houseTimer = Math.max(7, 15 - 0.8 * this.week) * (0.8 + 0.4 * this.rand());
       }
 
-      // 起飛啦: at random moments every car flies for a few seconds
-      if (this.flyLeft > 0) {
-        this.flyLeft -= dt;
-        if (this.flyLeft <= 0) { this.flyLeft = 0; this.flyTimer = this.nextFlyGap(); this.setFlyMode(false); }
-      } else if (this.flyAuto && !this.flyMode) {
-        this.flyTimer -= dt;
-        if (this.flyTimer <= 0) this.startFlight();
+      // the random modes: at random moments every car flies (起飛啦, 10 s) or speeds up and burns rubber (藤原模式, 1 minute)
+      if (this.modeLeft > 0) {
+        this.modeLeft -= dt;
+        if (this.modeLeft <= 0) this.endMode();
+      } else if (this.modesAuto && !this.flyMode && !this.fujiMode) {
+        this.modeTimer -= dt;
+        if (this.modeTimer <= 0) this.startRandomMode();
       }
 
       // rebuild lanes

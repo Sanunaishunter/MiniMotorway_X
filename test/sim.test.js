@@ -6,8 +6,8 @@ require(path.join(__dirname, '../js/sim.js'));
 require(path.join(__dirname, '../js/police.js'));
 const MM = globalThis.MM;
 // 起飛啦 starts by itself at random: keep it away from the scenarios (fake cars, isolated games) except in its own tests
-const FLY_GAPS = { min: MM.CFG.FLY_GAP_MIN, max: MM.CFG.FLY_GAP_MAX };
-MM.CFG.FLY_GAP_MIN = MM.CFG.FLY_GAP_MAX = 1e9;
+const MODE_GAPS = { min: MM.CFG.MODE_GAP_MIN, max: MM.CFG.MODE_GAP_MAX };
+MM.CFG.MODE_GAP_MIN = MM.CFG.MODE_GAP_MAX = 1e9;
 
 let failures = 0;
 // a collapse is where the old game ended: now it offers the mayor's order first
@@ -1403,33 +1403,88 @@ console.log('24. 天神之手 (Hand of God): lift a house or destination and put
     } else console.log('  (no sports car showed up in this run; weight test skipped)');
   }
 
-  // it starts by itself at a random moment, lasts FLY_SECONDS, then the next one is drawn at random
+  // the random modes start by themselves at a random moment, last as long as their mode says, then the next one is drawn at random
   {
     const C = MM.CFG;
-    C.FLY_GAP_MIN = FLY_GAPS.min; C.FLY_GAP_MAX = FLY_GAPS.max;
-    const a = new MM.Game({ seed: 8 }), b = new MM.Game({ seed: 8 }), c = new MM.Game({ seed: 9 }), d = new MM.Game({ seed: 8, noFlights: true });
-    check(a.flyTimer >= C.FLY_GAP_MIN && a.flyTimer <= C.FLY_GAP_MAX && !a.flyMode, 'the first 起飛啦 is ' + a.flyTimer.toFixed(1) + ' s away (between ' + C.FLY_GAP_MIN + ' and ' + C.FLY_GAP_MAX + ')');
-    check(a.flyTimer === b.flyTimer && a.flyTimer !== c.flyTimer, 'random, but the same for the same seed');
+    C.MODE_GAP_MIN = MODE_GAPS.min; C.MODE_GAP_MAX = MODE_GAPS.max;
+    const a = new MM.Game({ seed: 8 }), b = new MM.Game({ seed: 8 }), c = new MM.Game({ seed: 9 }), d = new MM.Game({ seed: 8, noModes: true });
+    check(a.modeTimer >= C.MODE_GAP_MIN && a.modeTimer <= C.MODE_GAP_MAX && !a.flyMode && !a.fujiMode, 'the first random mode is ' + a.modeTimer.toFixed(1) + ' s away (between ' + C.MODE_GAP_MIN + ' and ' + C.MODE_GAP_MAX + ')');
+    check(a.modeTimer === b.modeTimer && a.modeTimer !== c.modeTimer, 'random, but the same for the same seed');
     check(a.houses.map((h) => h.node).join() === d.houses.map((h) => h.node).join() && a.dests.map((x) => x.node).join() === d.dests.map((x) => x.node).join(), 'it uses its own random stream: the map is the same with and without it');
-    let t0 = -1, t1 = -1;
-    a.flyTimer = 0.5;
-    for (let t = 0; t < 25 * 30 && t1 < 0; t++) {
-      a.update(0.04);
-      if (a.flyMode && t0 < 0) t0 = a.time;
-      if (t0 >= 0 && !a.flyMode) t1 = a.time;
-      a.events.length = 0;
+    // run it with the mode picked by the seed: whichever one it is, it lasts its own time
+    const lasts = (g) => {
+      let t0 = -1, t1 = -1, kind = '';
+      g.modeTimer = 0.5;
+      for (let t = 0; t < 25 * 70 && t1 < 0; t++) {
+        g.update(0.04);
+        if ((g.flyMode || g.fujiMode) && t0 < 0) { t0 = g.time; kind = g.flyMode ? 'fly' : 'fuji'; }
+        if (t0 >= 0 && !g.flyMode && !g.fujiMode) t1 = g.time;
+        g.events.length = 0;
+      }
+      return { t0, t1, kind };
+    };
+    const kinds = new Set();
+    for (const seed of [8, 9, 10, 11, 12, 13]) {
+      const g = new MM.Game({ seed });
+      isolate(g); // no demand, so the game cannot collapse while we wait
+      const r = lasts(g);
+      kinds.add(r.kind);
+      const want = r.kind === 'fly' ? C.FLY_SECONDS : C.FUJI_SECONDS;
+      check(r.t0 > 0 && r.t0 < 1 && Math.abs(r.t1 - r.t0 - want) < 0.1, 'seed ' + seed + ': ' + r.kind + ' starts when the timer runs out (' + r.t0.toFixed(2) + ' s) and lasts ' + want + ' s (' + (r.t1 - r.t0).toFixed(2) + ')');
+      check(g.modeTimer >= C.MODE_GAP_MIN && g.modeTimer <= C.MODE_GAP_MAX && g.modeLeft === 0, 'seed ' + seed + ': afterwards the next one is drawn at random');
     }
-    check(t0 > 0 && t0 < 1, 'it starts by itself when the timer runs out (at ' + t0.toFixed(2) + ' s)');
-    check(t1 > 0 && Math.abs(t1 - t0 - C.FLY_SECONDS) < 0.1, 'and lasts ' + C.FLY_SECONDS + ' seconds (' + (t1 - t0).toFixed(2) + ')');
-    check(a.flyTimer >= C.FLY_GAP_MIN && a.flyTimer <= C.FLY_GAP_MAX && a.flyLeft === 0, 'afterwards the next one is drawn at random');
-    d.flyTimer = 0.5;
+    check(kinds.has('fly') && kinds.has('fuji'), 'both modes get picked at random (' + [...kinds].join(', ') + ')');
+    d.modeTimer = 0.5;
     for (let t = 0; t < 25 * 5; t++) d.update(0.04);
-    check(!d.flyMode, 'noFlights switches the random flights off');
+    check(!d.flyMode && !d.fujiMode, 'noModes switches the random modes off');
     // game time only: nothing runs while the game is frozen
     const f = new MM.Game({ seed: 8 });
-    f.flyTimer = 0.5; f.state = 'mayor'; f.update(5);
-    check(!f.flyMode && f.flyTimer === 0.5, 'the timer is frozen with the game');
-    C.FLY_GAP_MIN = C.FLY_GAP_MAX = 1e9;
+    f.modeTimer = 0.5; f.state = 'mayor'; f.update(5);
+    check(!f.flyMode && !f.fujiMode && f.modeTimer === 0.5, 'the timer is frozen with the game');
+    C.MODE_GAP_MIN = C.MODE_GAP_MAX = 1e9;
+  }
+
+  // ---------------------------------------------------------------------------------------------- 藤原模式
+  console.log('\n藤原模式 (every car faster for a minute)');
+  {
+    const C = MM.CFG;
+    // a car driving along a straight road: how long does it take?
+    const drive = (fuji) => {
+      let g, o = -1;
+      for (let seed = 21; o < 0; seed++) { g = new MM.Game({ seed, cols: 40, rows: 24 }); o = findOpen(g, 12, 10); }
+      isolate(g);
+      const path = [];
+      for (let k = 0; k < 10; k++) path.push(o + 3 * g.world.cols + k);
+      for (let k = 0; k + 1 < path.length; k++) g.addEdge(path[k], path[k + 1], 1);
+      if (fuji) g.setFujiMode(true);
+      const car = fakeCar(g, path);
+      let t = 0;
+      while (!car.dead && t < 60) { g.update(0.04); t += 0.04; g.events.length = 0; }
+      return t;
+    };
+    const slow = drive(false), fast = drive(true);
+    check(slow / fast > C.FUJI_MULT * 0.85 && slow / fast <= C.FUJI_MULT * 1.05, 'a car covers 9 cells ' + (slow / fast).toFixed(2) + 'x as fast (' + slow.toFixed(1) + ' s -> ' + fast.toFixed(1) + ' s, x' + C.FUJI_MULT + ' asked)');
+
+    const g = new MM.Game({ seed: 8, noModes: true });
+    check(g.boost() === 1 && g.setFujiMode(true) && g.boost() === C.FUJI_MULT && g.events.some((e) => e.type === 'fuji' && e.on), 'switching it on speeds every lane up and sends an event');
+    g.setFujiMode(false);
+    check(g.boost() === 1 && g.events.some((e) => e.type === 'fuji' && !e.on), 'switching it off restores the speed');
+
+    // the two modes exclude each other
+    const x = new MM.Game({ seed: 8, noModes: true });
+    x.startFlight(); x.startFujiwara();
+    check(x.fujiMode && !x.flyMode && x.modeLeft === C.FUJI_SECONDS, 'starting 藤原模式 ends 起飛啦');
+    x.startFlight();
+    check(x.flyMode && !x.fujiMode && x.modeLeft === C.FLY_SECONDS, 'and starting 起飛啦 ends 藤原模式');
+
+    // busy traffic at double speed stays consistent: no leaked locks, nothing stuck
+    const h = mk();
+    h.modesAuto = false;
+    h.startFujiwara();
+    let err = null;
+    for (let t = 0; t < 25 * 62 && !err; t++) { if (h.state === 'upgrade') h.chooseUpgrade(0); if (ended(h)) break; h.update(0.04); err = sanity(h); h.events.length = 0; }
+    check(!err, 'invariants hold through a minute of 藤原模式 (' + err + ')');
+    check(h.score > 0 && !h.fujiMode, 'cars are delivered, and the mode ends after its minute (' + h.score + ' delivered)');
   }
 
   // no flying while the game is frozen on the upgrade screen

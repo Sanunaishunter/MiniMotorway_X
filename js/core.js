@@ -12,8 +12,10 @@
     TUN_MULT: 1.5, // tunnel speed multiplier
     FLY_SPEED: 5, // 起飛啦: cells per second of a flying car (straight line to its destination)
     FLY_SECONDS: 10, // 起飛啦: every car flies for this long (game seconds) each time it happens
-    FLY_GAP_MIN: 30, // 起飛啦 happens at random: the wait until the next one is drawn from this range (game seconds, counted from when the last one ended)
-    FLY_GAP_MAX: 90,
+    MODE_GAP_MIN: 30, // the random modes (起飛啦, 藤原模式) start by themselves: the wait until the next one is drawn from this range (game seconds, counted from when the last one ended)
+    MODE_GAP_MAX: 90,
+    FUJI_SECONDS: 60, // 藤原模式: every car is faster for this long (game seconds)
+    FUJI_MULT: 2.5, // 藤原模式: top-speed multiplier of every car (about 2.4x faster on an ordinary road, see the test)
     FLY_MIN: 0.9, // shortest flight, in seconds (so a short hop is still visible)
     WIDE_GAP: 1.18, // following-gap multiplier on a four-lane road: 2 lanes / 1.18 = about 1.7x the flow of a two-lane road
     WIDE_HEADWAY: 0.28, // seconds between cars entering a junction that touches a four-lane road while another car is still inside

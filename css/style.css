@@ -68,8 +68,8 @@ html, body {
 .icon-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .icon-btn svg .fill { fill: currentColor; stroke: none; }
 .icon-btn.off { color: #8f98a6; }
-/* 起飛啦 status: shown only while the cars are flying (it is triggered at random, not by a button) */
-.fly-pill {
+/* status of the random modes (起飛啦 / 藤原模式): shown only while one is running; they are triggered at random, not by a button */
+.mode-pill {
   height: 38px; padding: 0 12px 0 9px; border-radius: 12px;
   display: flex; align-items: center; gap: 5px;
   background: linear-gradient(135deg, #ff9a3d, #ff5f6d); color: #fff;
@@ -77,10 +77,12 @@ html, body {
   box-shadow: 0 0 0 2px rgba(255, 138, 61, 0.35);
   animation: flyPulse 0.9s ease-in-out infinite alternate;
 }
-.fly-pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
-.fly-pill svg .fill { fill: currentColor; stroke: none; }
-.fly-pill b { min-width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; }
+.mode-pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.mode-pill svg .fill { fill: currentColor; stroke: none; }
+.mode-pill b { min-width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; }
+.mode-pill.fuji { background: linear-gradient(135deg, #2b2f3a, #626a7a); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55); animation-name: fujiPulse; }
 @keyframes flyPulse { to { box-shadow: 0 0 0 5px rgba(255, 138, 61, 0.12); } }
+@keyframes fujiPulse { to { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.2); } }
 
 /* ---------- toolbar (bottom bar) ---------- */
 #toolbar {
@@ -259,7 +261,7 @@ html, body {
   .week-pill { flex: 1 1 110px; }
   .hud-btns { gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
   .icon-btn { width: 36px; height: 36px; border-radius: 11px; }
-  .fly-pill { height: 36px; border-radius: 11px; }
+  .mode-pill { height: 36px; border-radius: 11px; }
   .tool { flex: 1 1 0; width: auto; min-width: 34px; max-width: 54px; height: 50px; font-size: 9px; }
   .tool svg { width: 22px; height: 22px; }
   #toolbar { gap: 3px; justify-content: center; padding-left: 6px; padding-right: 6px; }
@@ -282,7 +284,7 @@ html, body {
   .week-bar { height: 5px; }
   .hud-btns { gap: 5px; }
   .icon-btn { width: 34px; height: 34px; border-radius: 10px; }
-  .fly-pill { height: 34px; border-radius: 10px; }
+  .mode-pill { height: 34px; border-radius: 10px; }
   .icon-btn svg { width: 18px; height: 18px; }
 
   #toolbar { gap: 5px; padding-top: 4px; padding-bottom: calc(4px + var(--safe-b)); }

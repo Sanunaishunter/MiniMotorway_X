@@ -29,9 +29,10 @@
         <button class="icon-btn" id="btnFit" title="回到完整地圖 (0)" aria-label="回到完整地圖" style="display:none">
           <svg viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/><circle cx="12" cy="12" r="2.2" class="fill"/></svg>
         </button>
-        <div class="fly-pill" id="flyPill" style="display:none" role="status">
-          <svg viewBox="0 0 24 24"><path d="M21 3L3 10.5l6.5 2.5L12 20z" class="fill"/><path d="M9.5 13L21 3"/></svg>
-          <span>起飛啦</span><b id="flyLeft"></b>
+        <div class="mode-pill" id="modePill" style="display:none" role="status">
+          <svg id="icoFly" viewBox="0 0 24 24"><path d="M21 3L3 10.5l6.5 2.5L12 20z" class="fill"/><path d="M9.5 13L21 3"/></svg>
+          <svg id="icoFuji" viewBox="0 0 24 24" style="display:none"><path d="M4 6l6 6-6 6M12 6l6 6-6 6"/></svg>
+          <span id="modeName">起飛啦</span><b id="modeLeft"></b>
         </div>
         <button class="icon-btn" id="btnPause" title="暫停 (空白鍵)" aria-label="暫停">
           <svg viewBox="0 0 24 24"><path id="pauseIcon" d="M8 5v14M16 5v14"/></svg>

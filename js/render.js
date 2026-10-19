@@ -4,6 +4,8 @@
   const MM = root.MM;
   const CFG = MM.CFG;
   const C = CFG.CELL;
+  const SMOKE_EVERY = 0.045; // game seconds between two puffs of one car
+  const SMOKE_MAX = 1800; // most puffs alive at once
 
   const THEME = {
     board: '#bcd98f', // forest-floor grass
@@ -51,6 +53,8 @@
       this.game = null;
       this.view = { scale: 1, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
       this.fx = [];
+      this.smoke = []; // 藤原模式: tyre smoke puffs {x, y, t0, r0, vx, vy, life}, aged in game time like the other effects
+      this.smokeAt = new Map(); // car / patrol car id -> {t: game time of its last puff, a: its heading then}
       this.hover = -1;
       this.tool = 'road';
       this.preview = null; // {a, b, reason} while dragging a tunnel
@@ -82,6 +86,8 @@
       this.police = new MM.Police(game.world, (Math.random() * 1e9) | 0); // decorative patrol cars (not part of the simulation)
       this.planes = new MM.Planes((Math.random() * 1e9) | 0);
       this.fx = [];
+      this.smoke = [];
+      this.smokeAt.clear();
       this.statics = null;
       this.resetCamera();
     }
@@ -403,6 +409,56 @@
           rr(ctx, -2.2, -1.3, 2.6, 2.6, 0.8); ctx.fill(); ctx.stroke();
         }
       }
+    }
+
+    /** 藤原模式: every car (and patrol car) on the ground leaves a trail of white tyre smoke, thicker in the bends. Aged in game time, so it freezes with the game. */
+    updateSmoke(g) {
+      const t = g.time;
+      if (g.fujiMode) {
+        const seen = this.smokeAt;
+        const emit = (key, x, y, a) => {
+          let st = seen.get(key);
+          if (!st) { st = { t: t - SMOKE_EVERY, a: NaN }; seen.set(key, st); }
+          if (t - st.t < SMOKE_EVERY) return;
+          st.t = t;
+          let d = Number.isNaN(st.a) ? 0 : Math.abs(a - st.a);
+          if (d > Math.PI) d = 2 * Math.PI - d;
+          st.a = a;
+          const k = 1 + Math.min(2, d * 14), rnd = Math.random;
+          this.smoke.push({
+            x: x - Math.cos(a) * 6 + (rnd() - 0.5) * 3, y: y - Math.sin(a) * 6 + (rnd() - 0.5) * 3, t0: t,
+            r0: 3.4 * k * (0.8 + 0.4 * rnd()), vx: (rnd() - 0.5) * 6 - Math.cos(a) * 4, vy: (rnd() - 0.5) * 6 - Math.sin(a) * 4,
+            life: 1.0 + 0.8 * rnd(),
+          });
+        };
+        for (const car of g.cars) {
+          if (car.dead || this.carLevel(car) !== 0) continue; // not inside a tunnel, not on an overpass deck
+          const pose = this.carPose(car);
+          emit(car.id, pose.x, pose.y, pose.a);
+        }
+        for (const cop of this.police.cops) if (!cop.dying) emit('c' + cop.id, cop.x, cop.y, cop.ang);
+        if (seen.size > g.cars.length + this.police.cops.length + 40) { // forget the cars that are gone
+          const live = new Set(this.police.cops.map((c) => 'c' + c.id));
+          for (const car of g.cars) live.add(car.id);
+          for (const k of [...seen.keys()]) if (!live.has(k)) seen.delete(k);
+        }
+        if (this.smoke.length > SMOKE_MAX) this.smoke.splice(0, this.smoke.length - SMOKE_MAX);
+      }
+      if (this.smoke.length) this.smoke = this.smoke.filter((p) => t - p.t0 < p.life);
+    }
+
+    drawSmoke(ctx, g) {
+      const t = g.time;
+      for (const p of this.smoke) {
+        const age = t - p.t0, k = age / p.life;
+        if (k < 0 || k >= 1) continue;
+        ctx.globalAlpha = 0.8 * Math.pow(1 - k, 1.2);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(p.x + p.vx * age, p.y + p.vy * age, p.r0 + k * 9, 0, 6.2832);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
     }
 
     /** 起飛啦: a car with wings and a jet flame, rising off the road and flying straight to its destination. */
@@ -1112,6 +1168,8 @@
 
       // ---- cars (under buildings so they appear to enter/leave them): ground level, then overpass decks, then
       //      the cars driving on top of them; cars inside a tunnel are not drawn
+      this.updateSmoke(g);
+      this.drawSmoke(ctx, g); // the smoke lies on the road, under the cars
       const elevated = [];
       for (const car of g.cars) {
         if (car.dead) continue;
