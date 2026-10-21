@@ -683,44 +683,76 @@
       return best;
     }
 
-    /** The layout for every building now ([{b, to}]), or null if one side has no room. Changes nothing. */
+    /** The layout for every building now: [{b, to}], with plan.band (the rows of the colour bands), plan.loose (buildings that did not fit the neat
+     *  lattice and went to the nearest free spot instead) and plan.stuck (buildings with no free spot at all: they stay where they are). Changes nothing. */
     seaPlan() {
-      const w = this.world, plan = [];
-      const all = new Set(this.buildings);
+      const w = this.world;
       const colors = [];
       for (let c = 0; c < this.colorsUnlocked; c++) colors.push(c);
       const band = {};
       colors.forEach((c, i) => { band[c] = ((i + 0.5) * w.rows) / colors.length; });
-      for (const side of [0, 1]) {
-        const list = side === 0 ? this.houses : this.dests;
+      const stay = new Set(); // buildings that found nothing: they stay put and count as obstacles for everyone else
+      let res = null;
+      for (let pass = 0; pass < 4; pass++) {
+        res = this.seaAssign(colors, band, stay);
+        const fresh = res.stuck.filter((b) => !stay.has(b));
+        if (!fresh.length) break;
+        for (const b of fresh) stay.add(b);
+      }
+      const keep = [...new Set([...stay, ...res.stuck])]; // everything that stays where it is
+      const manh = (a, b) => Math.abs(w.col(a) - w.col(b)) + Math.abs(w.row(a) - w.row(b));
+      const plan = res.plan.filter((m) => !keep.some((k) => manh(m.to, k.node) < 2)); // (only if the passes above did not settle)
+      plan.band = band;
+      plan.loose = res.loose;
+      plan.stuck = keep;
+      return plan;
+    }
+
+    /** One pass of the layout: destinations first (they are few and should get their proper places), then houses. */
+    seaAssign(colors, band, stay) {
+      const w = this.world, mid = (w.cols - 1) / 2;
+      const ignore = new Set(this.buildings.filter((b) => !stay.has(b)));
+      const plan = [], placed = [], stuck = [];
+      let loose = 0;
+      const spaced = (n) => placed.every((m) => Math.abs(w.col(n) - w.col(m)) + Math.abs(w.row(n) - w.row(m)) >= 2);
+      for (const side of [1, 0]) {
+        const list = (side === 0 ? this.houses : this.dests).filter((b) => !stay.has(b));
         const slots = [];
-        this.seaColumns(side).forEach((x, k) => { for (const y of this.seaRows()) { const n = y * w.cols + x; if (this.seaSlotOK(n, all)) slots.push({ n, y, k }); } });
-        if (slots.length < list.length) return null;
+        this.seaColumns(side).forEach((x, k) => { for (const y of this.seaRows()) { const n = y * w.cols + x; if (this.seaSlotOK(n, ignore)) slots.push({ n, y, k }); } });
         const taken = new Set();
         // the colour with the most buildings chooses first, so that its group stays together
         const groups = colors.map((c) => ({ c, bs: list.filter((b) => b.color === c) })).sort((a, b) => b.bs.length - a.bs.length);
         for (const g of groups) {
           for (const b of g.bs) {
-            let best = null, bs = Infinity;
+            let best = -1, bs = Infinity;
             for (const s of slots) {
-              if (taken.has(s.n)) continue;
+              if (taken.has(s.n) || !spaced(s.n)) continue;
               const sc = Math.abs(s.y - band[g.c]) + 0.6 * s.k;
-              if (sc < bs) { bs = sc; best = s; }
+              if (sc < bs) { bs = sc; best = s.n; }
             }
-            taken.add(best.n);
-            plan.push({ b, to: best.n });
+            if (best < 0) { // the neat places are used up (or blocked): the nearest free spot, on its own side if there is one
+              for (let n = 0; n < w.n; n++) {
+                if (taken.has(n) || !this.seaSlotOK(n, ignore) || !spaced(n)) continue;
+                const x = w.col(n), own = side === 0 ? x < mid : x > mid;
+                const sc = Math.abs(w.row(n) - band[g.c]) + 0.3 * Math.abs(x - mid) + (own ? 0 : 1000);
+                if (sc < bs) { bs = sc; best = n; }
+              }
+              if (best >= 0) loose++;
+            }
+            if (best < 0) { stuck.push(b); continue; }
+            taken.add(best);
+            placed.push(best);
+            plan.push({ b, to: best });
           }
         }
       }
-      plan.band = band;
-      return plan;
+      return { plan, loose, stuck };
     }
 
-    /** Whether the sea can be parted (and why not): 'none' / 'state' / 'full'. */
+    /** Whether the sea can be parted (and why not): 'none' / 'state'. Whatever does not fit the neat layout goes to the nearest free spot. */
     checkSea() {
       if (!this.canEdit()) return 'state';
       if (this.inv.sea <= 0) return 'none';
-      if (!this.seaPlan()) return 'full';
       return null;
     }
 
@@ -744,7 +776,7 @@
       this.sea = { band: plan.band };
       this.validateCars();
       this.events.push({ type: 'sea' });
-      return { ok: true, moved: movers.length };
+      return { ok: true, moved: movers.length, loose: plan.loose, stuck: plan.stuck.length };
     }
 
     // ---- 超級原子彈: wipe every road off the map in one go

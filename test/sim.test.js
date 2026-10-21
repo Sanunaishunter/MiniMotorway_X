@@ -1561,12 +1561,37 @@ console.log('25. 摩西分海: houses to the left, destinations to the right, th
     check(!err3 && m.dests.every((d) => d.inbound >= 0 && d.pins >= 0), 'and the game goes on with consistent counters (' + err3 + ')');
   }
 
-  // no room: one side cannot hold everything
+  // no room on a side: whatever does not fit the neat layout goes to the nearest free spot, nothing is refused
   {
-    const t = new MM.Game({ seed: 3, cols: 14, rows: 8 });
+    const t = new MM.Game({ seed: 4, cols: 20, rows: 10 });
+    const tw = t.world;
+    t.colorsUnlocked = 3;
+    for (let c = 0; c < 3; c++) {
+      for (let k = 0; k < 6 && t.dests.filter((d) => d.color === c).length < 1; k++) t.spawnRandom('dest', c);
+      for (let k = 0; k < 30 && t.houses.filter((h) => h.color === c).length < 5; k++) t.spawnRandom('house', c);
+    }
+    const nb2 = t.buildings.length;
+    // block most of the left side's neat places with water, so the houses cannot all have one
+    const cols = t.seaColumns(0), rowsL = t.seaRows();
+    for (const x of cols.slice(0, cols.length - 1)) for (const y of rowsL) { const n = y * tw.cols + x; if (!tw.bld[n]) tw.water[n] = 1; }
     t.inv.sea = 1;
-    for (let i = 0; i < 40; i++) t.houses.push({ kind: 'house', color: 0, node: -1, queue: [] });
-    check(t.checkSea() === 'full' && !t.partSea().ok && t.inv.sea === 1, 'not enough room on a side: refused, and the piece is kept');
+    check(t.checkSea() === null, 'with most of the left side blocked the sea can still be parted');
+    const rr = t.partSea();
+    check(rr.ok && rr.loose > 0 && t.buildings.length === nb2, 'it is done anyway: ' + rr.loose + ' buildings went to the nearest free spot, ' + rr.stuck + ' stayed');
+    check(t.buildings.every((b) => tw.bld[b.node] === b && !tw.water[b.node]) && tw.bld.filter(Boolean).length === nb2, 'every building is on dry land and the map agrees');
+    check(t.buildings.every((a, i) => t.buildings.every((b, j) => i === j || Math.abs(tw.col(a.node) - tw.col(b.node)) + Math.abs(tw.row(a.node) - tw.row(b.node)) >= 2)), 'and still none touch');
+    check(t.dests.every((d) => tw.col(d.node) > (tw.cols - 1) / 2), 'the destinations got their proper side');
+    const e = sanity(t);
+    check(!e, 'bookkeeping is consistent (' + e + ')');
+    // the whole map full: buildings that find no free spot simply stay where they are
+    const z = new MM.Game({ seed: 4, cols: 12, rows: 7 });
+    z.colorsUnlocked = 2;
+    for (let c = 0; c < 2; c++) { z.spawnRandom('dest', c); for (let k = 0; k < 20 && z.houses.filter((h) => h.color === c).length < 4; k++) z.spawnRandom('house', c); }
+    const zn = z.buildings.length, zw = z.world;
+    for (let n = 0; n < zw.n; n++) if (!zw.bld[n]) zw.water[n] = 1; // nothing but water around the buildings
+    z.inv.sea = 1;
+    const zr = z.partSea();
+    check(zr.ok && zr.stuck === zn && zr.moved === 0 && z.buildings.length === zn && z.buildings.every((b) => zw.bld[b.node] === b), 'a map with no free spot at all: every building stays where it is, nothing is lost (' + zr.stuck + ' of ' + zn + ' stayed put)');
   }
   const f = new MM.Game({ seed: 3 });
   f.inv.sea = 1; f.state = 'upgrade';
