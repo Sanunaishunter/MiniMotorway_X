@@ -1519,7 +1519,7 @@ console.log('25. 摩西分海: only the houses part to the left and right, the s
   const colourSides = [0, 1, 2, 3].map((c) => new Set(g.houses.filter((h) => h.color === c).map(sideOf)));
   check(colourSides.every((st) => st.size === 1), 'every colour\'s houses are all on the same side');
   const left = g.houses.filter((h) => sideOf(h) === 0).length, right = g.houses.length - left;
-  check(left > 0 && right > 0 && Math.abs(left - right) <= 5, 'both sides are used and about equally full (' + left + ' left, ' + right + ' right)');
+  check(left > 0 && right > 0, 'the houses are parted: both sides are used (' + left + ' left, ' + right + ' right)');
   let worst = 0;
   for (let c = 0; c < 4; c++) { const rows = g.houses.filter((h) => h.color === c).map((h) => w.row(h.node)); worst = Math.max(worst, Math.max(...rows) - Math.min(...rows)); }
   check(worst <= 8, 'every colour stays together (its houses span at most ' + worst + ' rows of ' + w.rows + ')');
@@ -1595,6 +1595,41 @@ console.log('25. 摩西分海: only the houses part to the left and right, the s
     const zr = z.partSea();
     check(zr.ok && zr.stuck === zh && zr.moved === 0 && z.buildings.length === zn && z.buildings.every((b) => zw.bld[b.node] === b), 'a map with no free spot at all: every house stays where it is, nothing is lost (' + zr.stuck + ' of ' + zh + ' stayed put)');
   }
+  // the houses go to the side of their own destination and gather near it
+  {
+    const near = (g2, col, row) => { // the free land node closest to (col, row)
+      const w2 = g2.world; let best = -1, bd = Infinity;
+      for (let n = 0; n < w2.n; n++) { if (!g2.spotOK(n, false)) continue; const d = Math.abs(w2.col(n) - col) + Math.abs(w2.row(n) - row); if (d < bd) { bd = d; best = n; } }
+      return best;
+    };
+    const mkAt = (seed, spots) => {
+      const g2 = new MM.Game({ seed, cols: 38, rows: 20 });
+      g2.dests.length = 0; g2.houses.length = 0; g2.buildings.length = 0; g2.world.bld.fill(null);
+      g2.colorsUnlocked = spots.length;
+      spots.forEach(([c, r], color) => { g2.addBuilding('dest', color, near(g2, c, r)); });
+      spots.forEach((_, color) => { for (let k = 0; k < 30 && g2.houses.filter((h) => h.color === color).length < 5; k++) g2.spawnRandom('house', color); });
+      return g2;
+    };
+    const dist = (g2, h, d) => Math.abs(g2.world.col(h.node) - g2.world.col(d.node)) + Math.abs(g2.world.row(h.node) - g2.world.row(d.node));
+    // blue's destination far left, red's far right
+    const a = mkAt(6, [[3, 4], [34, 14]]);
+    a.inv.sea = 1; a.partSea();
+    const wa = a.world, mida = (wa.cols - 1) / 2;
+    check(a.houses.filter((h) => h.color === 0).every((h) => wa.col(h.node) < mida) && a.houses.filter((h) => h.color === 1).every((h) => wa.col(h.node) > mida), 'houses go to the side their destination is on');
+    const avg = (g2, color, d) => { const hs = g2.houses.filter((h) => h.color === color); return hs.reduce((x, h) => x + dist(g2, h, d), 0) / hs.length; };
+    check(avg(a, 0, a.dests[0]) < avg(a, 0, a.dests[1]) && avg(a, 1, a.dests[1]) < avg(a, 1, a.dests[0]), 'and each colour is nearer its own destination than the other one');
+    check(avg(a, 0, a.dests[0]) <= 14 && avg(a, 1, a.dests[1]) <= 14, 'close to it: on average ' + avg(a, 0, a.dests[0]).toFixed(1) + ' and ' + avg(a, 1, a.dests[1]).toFixed(1) + ' cells away');
+    // every destination on the left: one colour (the one nearest the middle) still crosses over, so that the houses are parted
+    const b = mkAt(6, [[3, 4], [10, 14], [15, 9]]);
+    b.inv.sea = 1; b.partSea();
+    const wb = b.world, midb = (wb.cols - 1) / 2;
+    const sidesB = [0, 1, 2].map((c) => new Set(b.houses.filter((h) => h.color === c).map((h) => (wb.col(h.node) < midb ? 0 : 1))));
+    check(sidesB.every((st) => st.size === 1) && sidesB[2].has(1) && sidesB[0].has(0) && sidesB[1].has(0), 'all destinations on the left: only the colour nearest the middle crosses over');
+    // a new house follows its destination too
+    const hb = b.spawnRandom('house', 0);
+    check(hb && wb.col(hb.node) < midb, 'new houses follow the same rule');
+  }
+
   const f = new MM.Game({ seed: 3 });
   f.inv.sea = 1; f.state = 'upgrade';
   check(f.checkSea() === 'state', 'not while the upgrade screen is up');

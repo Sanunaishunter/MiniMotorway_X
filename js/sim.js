@@ -56,7 +56,7 @@
       this.invincibleUntil = 0; // game time until which the mayor's order protects the city from collapsing
       this.mayorActive = false; // true from the moment the mayor's order is finished until its window has been judged
       this.mayorUses = 0;
-      this.sea = null; // 摩西分海 once used: {side: colour -> 0 left / 1 right, band: colour -> centre row}; new houses then go to their side by themselves
+      this.sea = null; // 摩西分海 once used: {side: colour -> 0 left / 1 right, band: colour -> centre row, tx: colour -> column to gather around}; new houses then go to their side by themselves
       this.blessed = false; // Kayray's blessing: invincible for good (until the player restarts)
       this.portalsGiven = 0; // pairs of teleport portals handed out so far (one per CFG.PORTAL_EVERY delivered cars)
       this.portalSeq = 0;
@@ -655,8 +655,9 @@
       return free >= 2;
     }
 
-    /** The sides and bands of the colours' houses. Each colour's houses go to ONE side (0 = left, 1 = right), the sides are kept about equally full
-     *  (on a tie a colour goes to the side its destination is on), and the colours of a side get a band of rows each, in the order of their destinations. */
+    /** The sides and bands of the colours' houses. Each colour's houses go to ONE side (0 = left, 1 = right): the side its destination is on, and as close
+     *  to the destination as the layout allows (`tx` = the column they gather around, `band` = the row). Only if every destination is on the same side
+     *  does the colour whose destination is nearest the middle go to the other side, so that the houses are still parted. */
     seaLayout() {
       const w = this.world, mid = (w.cols - 1) / 2;
       const info = [];
@@ -665,44 +666,62 @@
         if (!n) continue;
         const ds = this.dests.filter((d) => d.color === c);
         const mean = (f) => (ds.length ? ds.reduce((a, d) => a + f(d.node), 0) / ds.length : null);
-        info.push({ c, n, dc: mean((x) => w.col(x)) ?? mid, dr: mean((x) => w.row(x)) ?? w.rows / 2 });
+        info.push({ c, n, dc: mean((x) => w.col(x)), dr: mean((x) => w.row(x)) ?? w.rows / 2, has: ds.length > 0 });
       }
-      const side = {}, band = {}, load = [0, 0];
-      for (const i of [...info].sort((a, b) => b.n - a.n)) { // the biggest group chooses first
-        side[i.c] = load[0] < load[1] ? 0 : load[1] < load[0] ? 1 : i.dc <= mid ? 0 : 1;
-        load[side[i.c]] += i.n;
+      const side = {}, load = [0, 0];
+      for (const i of info) if (i.has) { side[i.c] = i.dc <= mid ? 0 : 1; load[side[i.c]] += i.n; }
+      const placed = info.filter((i) => i.has);
+      if (placed.length >= 2 && (load[0] === 0 || load[1] === 0)) { // all on one side: the one nearest the middle crosses over
+        const from = load[0] === 0 ? 1 : 0;
+        const cross = placed.reduce((a, b) => (Math.abs(b.dc - mid) < Math.abs(a.dc - mid) ? b : a));
+        side[cross.c] = 1 - from; load[from] -= cross.n; load[1 - from] += cross.n;
       }
+      for (const i of [...info].sort((a, b) => b.n - a.n)) if (!i.has) { // a colour without a destination: the emptier side
+        side[i.c] = load[0] <= load[1] ? 0 : 1; load[side[i.c]] += i.n;
+      }
+      const band = {}, tx = {};
       for (const s of [0, 1]) {
         const mine = info.filter((i) => side[i.c] === s).sort((a, b) => a.dr - b.dr);
-        mine.forEach((i, k) => { band[i.c] = ((k + 0.5) * w.rows) / mine.length; });
+        const sep = Math.max(2, Math.min(4, Math.floor((w.rows - 2) / Math.max(1, mine.length))));
+        let prev = -Infinity;
+        for (const i of mine) { band[i.c] = Math.max(i.dr, prev + sep); prev = band[i.c]; } // as close to the destination's row as the others leave room
+        const over = mine.length ? band[mine[mine.length - 1].c] - (w.rows - 2) : 0;
+        if (over > 0) for (const i of mine) band[i.c] -= over; // (pushed past the bottom: shift them all back up)
+        for (const i of mine) {
+          const onSide = i.has && (s === 0 ? i.dc <= mid : i.dc > mid);
+          tx[i.c] = onSide ? i.dc : mid;
+        }
       }
-      return { side, band };
+      return { side, band, tx };
     }
 
-    /** Where a new house of `color` goes in the sea layout: the free slot on its colour's side closest to its band and to the middle (or -1). */
+    /** Where a new house of `color` goes in the sea layout: the free slot on its colour's side closest to its destination (or -1). */
     seaSpot(color) {
       const sea = this.sea, w = this.world, mid = (w.cols - 1) / 2;
-      if (sea.side[color] == null) { // a colour that has no houses yet: the emptier side, and the emptiest stretch of it
+      if (sea.side[color] == null) { // a colour that has no houses yet: the side its destination is on (else the emptier side), and the emptiest stretch of it
+        const ds = this.dests.filter((d) => d.color === color);
+        const dc = ds.length ? ds.reduce((a, d) => a + w.col(d.node), 0) / ds.length : null;
+        const dr = ds.length ? ds.reduce((a, d) => a + w.row(d.node), 0) / ds.length : null;
         const cnt = [0, 0];
         for (const h of this.houses) cnt[w.col(h.node) < mid ? 0 : 1]++;
-        const ds = this.dests.filter((d) => d.color === color);
-        const dc = ds.length ? ds.reduce((a, d) => a + w.col(d.node), 0) / ds.length : mid;
-        sea.side[color] = cnt[0] < cnt[1] ? 0 : cnt[1] < cnt[0] ? 1 : dc <= mid ? 0 : 1;
+        sea.side[color] = dc != null ? (dc <= mid ? 0 : 1) : cnt[0] <= cnt[1] ? 0 : 1;
+        sea.tx[color] = dc != null && (sea.side[color] === 0 ? dc <= mid : dc > mid) ? dc : mid;
         const have = Object.keys(sea.band).filter((k) => sea.side[k] === sea.side[color]).map((k) => sea.band[k]);
-        let best = w.rows / 2, bd = -1;
-        for (let y = 1; y <= w.rows - 2; y++) {
+        let best = dr != null ? Math.round(dr) : w.rows / 2, bd = -1;
+        for (let y = 1; y <= w.rows - 2; y++) { // the row nearest its destination that is at least 2 away from the other bands
           const d = have.length ? Math.min(...have.map((b) => Math.abs(b - y))) : w.rows;
-          if (d > bd) { bd = d; best = y; }
+          const score = d >= 2 ? -Math.abs(y - (dr ?? w.rows / 2)) : -1000 + d;
+          if (bd === -1 || score > bd) { bd = score; best = y; }
         }
         sea.band[color] = best;
       }
-      const yc = sea.band[color];
+      const yc = sea.band[color], xc = sea.tx[color];
       let best = -1, bs = Infinity;
-      this.seaColumns(sea.side[color]).forEach((x, k) => {
+      this.seaColumns(sea.side[color]).forEach((x) => {
         for (const y of this.seaRows()) {
           const n = y * w.cols + x;
           if (!this.seaSlotOK(n)) continue;
-          const s = Math.abs(y - yc) + 0.6 * k;
+          const s = Math.abs(y - yc) + 0.3 * Math.abs(x - xc);
           if (s < bs) { bs = s; best = n; }
         }
       });
@@ -741,7 +760,7 @@
       for (const side of [0, 1]) {
         const list = this.houses.filter((b) => !stay.has(b) && layout.side[b.color] === side);
         const slots = [];
-        this.seaColumns(side).forEach((x, k) => { for (const y of this.seaRows()) { const n = y * w.cols + x; if (this.seaSlotOK(n, ignore)) slots.push({ n, y, k }); } });
+        this.seaColumns(side).forEach((x) => { for (const y of this.seaRows()) { const n = y * w.cols + x; if (this.seaSlotOK(n, ignore)) slots.push({ n, x, y }); } });
         const taken = new Set();
         // the colour with the most houses chooses first, so that its group stays together
         const colors = [...new Set(list.map((b) => b.color))];
@@ -751,14 +770,14 @@
             let best = -1, bs = Infinity;
             for (const s of slots) {
               if (taken.has(s.n) || !spaced(s.n)) continue;
-              const sc = Math.abs(s.y - layout.band[g.c]) + 0.6 * s.k;
+              const sc = Math.abs(s.y - layout.band[g.c]) + 0.3 * Math.abs(s.x - layout.tx[g.c]);
               if (sc < bs) { bs = sc; best = s.n; }
             }
             if (best < 0) { // the neat places are used up (or blocked): the nearest free spot, on its own side if there is one
               for (let n = 0; n < w.n; n++) {
                 if (taken.has(n) || !this.seaSlotOK(n, ignore) || !spaced(n)) continue;
                 const x = w.col(n), own = side === 0 ? x < mid : x > mid;
-                const sc = Math.abs(w.row(n) - layout.band[g.c]) + 0.3 * Math.abs(x - mid) + (own ? 0 : 1000);
+                const sc = Math.abs(w.row(n) - layout.band[g.c]) + 0.3 * Math.abs(x - layout.tx[g.c]) + (own ? 0 : 1000);
                 if (sc < bs) { bs = sc; best = n; }
               }
               if (best >= 0) loose++;
