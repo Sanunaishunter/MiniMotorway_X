@@ -11,7 +11,7 @@
     { id: 'wide', amount: 20, title: '四線道', desc: '把道路拓寬成每個方向兩條車道,通行量約 1.7 倍(不能用在連到房子的路與高速公路)。' },
     { id: 'ovp', amount: 2, title: '高架', desc: '放在十字路口,兩條路立體交叉:直行不必停,但不能轉彎。' },
     { id: 'mega', amount: 1, title: '超大圓環', desc: '3×3 格的單向四線道圓環,中央是一塊綠地:四條車道同時繞行,車流量比一般圓環大得多。放下去會清掉範圍內原本的路。' },
-    { id: 'sea', amount: 1, title: '摩西分海', desc: '所有房子搬到左邊、所有目的地搬到右邊,中間留一條大路;同顏色的排在一起、面對面,之後新長出來的也照這個規則。(路不跟著搬,要重新接)' },
+    { id: 'sea', amount: 1, title: '摩西分海', desc: '只有產車的小房子分成左右兩邊,中間留一條大路,同顏色的排在一起;目的地、道路和地圖都不動,之後新長出來的房子也照這個規則。(搬走的房子要重新接路)' },
     { id: 'tun', amount: 2, title: '隧道', desc: '從入口拖曳到同一直線 2–6 格外的出口,車子從地下穿過(可穿過水面與其他道路)。' },
   ];
 
@@ -56,7 +56,7 @@
       this.invincibleUntil = 0; // game time until which the mayor's order protects the city from collapsing
       this.mayorActive = false; // true from the moment the mayor's order is finished until its window has been judged
       this.mayorUses = 0;
-      this.sea = null; // 摩西分海 once used: {band: color -> centre row}; new houses / destinations then go to their side by themselves
+      this.sea = null; // 摩西分海 once used: {side: colour -> 0 left / 1 right, band: colour -> centre row}; new houses then go to their side by themselves
       this.blessed = false; // Kayray's blessing: invincible for good (until the player restarts)
       this.portalsGiven = 0; // pairs of teleport portals handed out so far (one per CFG.PORTAL_EVERY delivered cars)
       this.portalSeq = 0;
@@ -170,8 +170,8 @@
     }
 
     spawnRandom(kind, color) {
-      if (this.sea) { // 摩西分海: houses on the left, destinations on the right, each colour in its own band
-        const at = this.seaSpot(kind, color);
+      if (this.sea && kind === 'house') { // 摩西分海: the houses part left and right, each colour in its own band (destinations are placed as always)
+        const at = this.seaSpot(color);
         if (at >= 0) return this.addBuilding(kind, color, at);
       }
       const mainOnly = this.week <= 3 || this.rand() < 0.65;
@@ -622,7 +622,7 @@
     }
 
     // ---- 摩西分海: the houses part to the left, the destinations to the right, every colour in a band of its own
-    /** Slot columns of one side, nearest the middle first: every second column, mirrored for the right side (0 = left houses, 1 = right destinations). */
+    /** Slot columns of one side, nearest the middle first: every second column, mirrored for the right side (0 = left, 1 = right). */
     seaColumns(side) {
       const w = this.world, mid = (w.cols - 1) / 2, out = [];
       for (let x = Math.floor(mid - 1.5); x >= 1; x -= 2) out.push(side === 0 ? x : w.cols - 1 - x);
@@ -638,7 +638,7 @@
       return out;
     }
 
-    /** Whether node n can take a house / destination of the sea layout (`ignore` = buildings that are about to move away). */
+    /** Whether node n can take a house of the sea layout (`ignore` = buildings that are about to move away). */
     seaSlotOK(n, ignore) {
       const w = this.world;
       if (w.water[n] || w.feat[n] || w.island[n] || w.ringId[n] || w.portal.has(n) || w.deg(n) > 0) return false;
@@ -655,24 +655,50 @@
       return free >= 2;
     }
 
-    /** The row a colour's band is centred on: even bands for the colours there are now, and a new colour takes the emptiest stretch. */
-    seaBand(color) {
-      const sea = this.sea;
-      if (sea.band[color] != null) return sea.band[color];
-      const rows = this.world.rows, have = Object.values(sea.band);
-      let best = rows / 2, bd = -1;
-      for (let y = 1; y <= rows - 2; y++) {
-        const d = have.length ? Math.min(...have.map((b) => Math.abs(b - y))) : rows;
-        if (d > bd) { bd = d; best = y; }
+    /** The sides and bands of the colours' houses. Each colour's houses go to ONE side (0 = left, 1 = right), the sides are kept about equally full
+     *  (on a tie a colour goes to the side its destination is on), and the colours of a side get a band of rows each, in the order of their destinations. */
+    seaLayout() {
+      const w = this.world, mid = (w.cols - 1) / 2;
+      const info = [];
+      for (let c = 0; c < this.colorsUnlocked; c++) {
+        const n = this.houses.filter((h) => h.color === c).length;
+        if (!n) continue;
+        const ds = this.dests.filter((d) => d.color === c);
+        const mean = (f) => (ds.length ? ds.reduce((a, d) => a + f(d.node), 0) / ds.length : null);
+        info.push({ c, n, dc: mean((x) => w.col(x)) ?? mid, dr: mean((x) => w.row(x)) ?? w.rows / 2 });
       }
-      return (sea.band[color] = best);
+      const side = {}, band = {}, load = [0, 0];
+      for (const i of [...info].sort((a, b) => b.n - a.n)) { // the biggest group chooses first
+        side[i.c] = load[0] < load[1] ? 0 : load[1] < load[0] ? 1 : i.dc <= mid ? 0 : 1;
+        load[side[i.c]] += i.n;
+      }
+      for (const s of [0, 1]) {
+        const mine = info.filter((i) => side[i.c] === s).sort((a, b) => a.dr - b.dr);
+        mine.forEach((i, k) => { band[i.c] = ((k + 0.5) * w.rows) / mine.length; });
+      }
+      return { side, band };
     }
 
-    /** Where a new house (left) / destination (right) of `color` goes in the sea layout: the free slot closest to its colour's band and to the middle. */
-    seaSpot(kind, color) {
-      const side = kind === 'house' ? 0 : 1, yc = this.seaBand(color), w = this.world;
+    /** Where a new house of `color` goes in the sea layout: the free slot on its colour's side closest to its band and to the middle (or -1). */
+    seaSpot(color) {
+      const sea = this.sea, w = this.world, mid = (w.cols - 1) / 2;
+      if (sea.side[color] == null) { // a colour that has no houses yet: the emptier side, and the emptiest stretch of it
+        const cnt = [0, 0];
+        for (const h of this.houses) cnt[w.col(h.node) < mid ? 0 : 1]++;
+        const ds = this.dests.filter((d) => d.color === color);
+        const dc = ds.length ? ds.reduce((a, d) => a + w.col(d.node), 0) / ds.length : mid;
+        sea.side[color] = cnt[0] < cnt[1] ? 0 : cnt[1] < cnt[0] ? 1 : dc <= mid ? 0 : 1;
+        const have = Object.keys(sea.band).filter((k) => sea.side[k] === sea.side[color]).map((k) => sea.band[k]);
+        let best = w.rows / 2, bd = -1;
+        for (let y = 1; y <= w.rows - 2; y++) {
+          const d = have.length ? Math.min(...have.map((b) => Math.abs(b - y))) : w.rows;
+          if (d > bd) { bd = d; best = y; }
+        }
+        sea.band[color] = best;
+      }
+      const yc = sea.band[color];
       let best = -1, bs = Infinity;
-      this.seaColumns(side).forEach((x, k) => {
+      this.seaColumns(sea.side[color]).forEach((x, k) => {
         for (const y of this.seaRows()) {
           const n = y * w.cols + x;
           if (!this.seaSlotOK(n)) continue;
@@ -683,58 +709,56 @@
       return best;
     }
 
-    /** The layout for every building now: [{b, to}], with plan.band (the rows of the colour bands), plan.loose (buildings that did not fit the neat
-     *  lattice and went to the nearest free spot instead) and plan.stuck (buildings with no free spot at all: they stay where they are). Changes nothing. */
+    /** The layout for every house now: [{b, to}], with plan.layout (sides and bands), plan.loose (houses that did not fit the neat lattice and went
+     *  to the nearest free spot instead) and plan.stuck (houses with no free spot at all: they stay where they are). Changes nothing: only the
+     *  houses move, destinations, roads and everything else stay as they are. */
     seaPlan() {
-      const w = this.world;
-      const colors = [];
-      for (let c = 0; c < this.colorsUnlocked; c++) colors.push(c);
-      const band = {};
-      colors.forEach((c, i) => { band[c] = ((i + 0.5) * w.rows) / colors.length; });
-      const stay = new Set(); // buildings that found nothing: they stay put and count as obstacles for everyone else
+      const layout = this.seaLayout();
+      const stay = new Set(); // houses that found nothing: they stay put and count as obstacles for everyone else
       let res = null;
       for (let pass = 0; pass < 4; pass++) {
-        res = this.seaAssign(colors, band, stay);
+        res = this.seaAssign(layout, stay);
         const fresh = res.stuck.filter((b) => !stay.has(b));
         if (!fresh.length) break;
         for (const b of fresh) stay.add(b);
       }
-      const keep = [...new Set([...stay, ...res.stuck])]; // everything that stays where it is
+      const w = this.world, keep = [...new Set([...stay, ...res.stuck])]; // everything that stays where it is
       const manh = (a, b) => Math.abs(w.col(a) - w.col(b)) + Math.abs(w.row(a) - w.row(b));
       const plan = res.plan.filter((m) => !keep.some((k) => manh(m.to, k.node) < 2)); // (only if the passes above did not settle)
-      plan.band = band;
+      plan.layout = layout;
       plan.loose = res.loose;
       plan.stuck = keep;
       return plan;
     }
 
-    /** One pass of the layout: destinations first (they are few and should get their proper places), then houses. */
-    seaAssign(colors, band, stay) {
+    /** One pass of the layout. */
+    seaAssign(layout, stay) {
       const w = this.world, mid = (w.cols - 1) / 2;
-      const ignore = new Set(this.buildings.filter((b) => !stay.has(b)));
+      const ignore = new Set(this.houses.filter((b) => !stay.has(b))); // the houses are about to leave their places; everything else stays and is in the way
       const plan = [], placed = [], stuck = [];
       let loose = 0;
       const spaced = (n) => placed.every((m) => Math.abs(w.col(n) - w.col(m)) + Math.abs(w.row(n) - w.row(m)) >= 2);
-      for (const side of [1, 0]) {
-        const list = (side === 0 ? this.houses : this.dests).filter((b) => !stay.has(b));
+      for (const side of [0, 1]) {
+        const list = this.houses.filter((b) => !stay.has(b) && layout.side[b.color] === side);
         const slots = [];
         this.seaColumns(side).forEach((x, k) => { for (const y of this.seaRows()) { const n = y * w.cols + x; if (this.seaSlotOK(n, ignore)) slots.push({ n, y, k }); } });
         const taken = new Set();
-        // the colour with the most buildings chooses first, so that its group stays together
+        // the colour with the most houses chooses first, so that its group stays together
+        const colors = [...new Set(list.map((b) => b.color))];
         const groups = colors.map((c) => ({ c, bs: list.filter((b) => b.color === c) })).sort((a, b) => b.bs.length - a.bs.length);
         for (const g of groups) {
           for (const b of g.bs) {
             let best = -1, bs = Infinity;
             for (const s of slots) {
               if (taken.has(s.n) || !spaced(s.n)) continue;
-              const sc = Math.abs(s.y - band[g.c]) + 0.6 * s.k;
+              const sc = Math.abs(s.y - layout.band[g.c]) + 0.6 * s.k;
               if (sc < bs) { bs = sc; best = s.n; }
             }
             if (best < 0) { // the neat places are used up (or blocked): the nearest free spot, on its own side if there is one
               for (let n = 0; n < w.n; n++) {
                 if (taken.has(n) || !this.seaSlotOK(n, ignore) || !spaced(n)) continue;
                 const x = w.col(n), own = side === 0 ? x < mid : x > mid;
-                const sc = Math.abs(w.row(n) - band[g.c]) + 0.3 * Math.abs(x - mid) + (own ? 0 : 1000);
+                const sc = Math.abs(w.row(n) - layout.band[g.c]) + 0.3 * Math.abs(x - mid) + (own ? 0 : 1000);
                 if (sc < bs) { bs = sc; best = n; }
               }
               if (best >= 0) loose++;
@@ -756,25 +780,22 @@
       return null;
     }
 
-    /** 摩西分海: every house moves to the left, every destination to the right, the same colours side by side. The roads stay where they are. */
+    /** 摩西分海: the houses (the small ones that send out cars) part to the left and the right, the same colours together. Destinations, roads and
+     *  everything else on the map stay exactly as they are. */
     partSea() {
       const bad = this.checkSea();
       if (bad) return { ok: false, reason: bad };
       const w = this.world, plan = this.seaPlan();
       this.inv.sea--;
       const movers = plan.filter((m) => m.b.node !== m.to);
-      for (const m of movers) if (m.b.kind === 'dest') this.recallTrips(m.b); // (cars heading for a destination that leaves are recalled, as with the Hand)
-      const froms = movers.map((m) => m.b.node);
-      for (const m of movers) w.bld[m.b.node] = null; // lift everything first: a spot may be one that another building is leaving
+      for (const m of movers) w.bld[m.b.node] = null; // lift everything first: a spot may be one that another house is leaving
       for (const m of movers) {
         const from = m.b.node;
         m.b.node = m.to;
         w.bld[m.to] = m.b;
         this.events.push({ type: 'move', from, node: m.to, color: m.b.color });
       }
-      this.cleanFeatures(froms);
-      this.sea = { band: plan.band };
-      this.validateCars();
+      this.sea = plan.layout; // from now on new houses follow the same layout
       this.events.push({ type: 'sea' });
       return { ok: true, moved: movers.length, loose: plan.loose, stuck: plan.stuck.length };
     }

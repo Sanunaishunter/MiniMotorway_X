@@ -358,20 +358,20 @@
       toast('轟!道路全部被抹除了,重新規劃吧');
     }
   }
-  /** 摩西分海: houses to the left, destinations to the right, colours together (asks first: the buildings move and the old roads no longer fit). */
+  /** 摩西分海: the houses part to the left and the right, colours together (asks first: the houses move and their old roads no longer fit). */
   function partSea() {
     const g = ui.game;
     if (ui.mode !== 'play' || !g.canEdit()) return;
     const bad = g.checkSea();
     if (bad === 'none') { deny('沒有摩西分海了:每週升級選單有機會拿到'); return; }
     if (bad) return;
-    if (!window.confirm('摩西分海?所有房子會搬到左邊、所有目的地搬到右邊,同顏色排在一起,之後新長出來的也是。道路不會跟著搬,要重新接;正開往搬走目的地的車會被召回。')) return;
+    if (!window.confirm('摩西分海?產車的小房子會分成左右兩邊、同顏色排在一起,之後新長出來的房子也是。目的地、道路和地圖都不會動,但搬走的房子要重新接路。')) return;
     const r = g.partSea();
     if (r.ok) {
       sfx.sea();
       setTpFirst(-1); setHandFirst(-1);
       const extra = r.loose ? `;${r.loose} 棟排不進整齊的位置,改放在最近的空位` : '';
-      toast('摩西分海!房子在左、目的地在右,中間是大路' + extra + (r.stuck ? `;${r.stuck} 棟找不到空位,留在原地` : ''));
+      toast('摩西分海!房子分成左右兩邊,同顏色排在一起' + extra + (r.stuck ? `;${r.stuck} 棟找不到空位,留在原地` : ''));
     }
   }
   const CLICK_TOOLS = ['light', 'round', 'ovp', 'big', 'mega', 'tp', 'hand'];
